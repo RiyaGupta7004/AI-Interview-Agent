@@ -1,56 +1,100 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import { useNavigate } from "react-router-dom";
 
+import api from "../services/api.js";
 import InterviewHeader from "../components/InterviewHeader.jsx";
 import ProgressBar from "../components/ProgressBar.jsx";
 import ChatMessage from "../components/ChatMessage.jsx";
 import TypingIndicator from "../components/TypingIndicator.jsx";
 import InterviewSidebar from "../components/InterviewSidebar.jsx";
 
-const interviewQuestions = [
-  "Tell me what Retrieval-Augmented Generation is.",
-  "How would you improve a prompt for better reasoning and structure?",
-  "What are the tradeoffs between vector databases and traditional relational storage for AI workloads?",
-  "Describe how an AI agent differs from a simple LLM call.",
-  "What is MCP and why does it matter in modern AI systems?",
-  "How do large language models reason, and where do they fail?",
-  "When would you choose fine-tuning over prompt engineering?",
-  "How would you deploy an AI feature into production responsibly?",
-];
+const DEFAULT_CANDIDATE_ID = "CAND-003";
+
+const createTimestamp = () =>
+  new Date().toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 
 function InterviewPage() {
   const navigate = useNavigate();
-  const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
-  const [answers, setAnswers] = useState([]);
-  const [messages, setMessages] = useState([
-    {
-      id: 1,
-      sender: "ai",
-      text: interviewQuestions[0],
-      timestamp: "09:14",
-    },
-  ]);
+  const [sessionId, setSessionId] = useState("");
+  const [messages, setMessages] = useState([]);
   const [draft, setDraft] = useState("");
   const [isTyping, setIsTyping] = useState(false);
+  const [status, setStatus] = useState("Starting interview...");
+  const [topic, setTopic] = useState("Loading...");
+  const [progress, setProgress] = useState({ current: 1, total: 1 });
+  const [currentQuestionNumber, setCurrentQuestionNumber] = useState(1);
+  const [questionsRemaining, setQuestionsRemaining] = useState(0);
 
-  const currentQuestionNumber = currentQuestionIndex + 1;
-  const remainingQuestions = interviewQuestions.length - currentQuestionNumber;
+  const progressLabel = useMemo(() => {
+    if (!progress.total) {
+      return "Preparing interview...";
+    }
 
-  const progressLabel = useMemo(
-    () => `Question ${currentQuestionNumber} of ${interviewQuestions.length}`,
-    [currentQuestionNumber]
-  );
+    return `Question ${Math.max(currentQuestionNumber, progress.current || 1)} of ${progress.total}`;
+  }, [currentQuestionNumber, progress]);
 
-  const handleSendMessage = () => {
+  const startInterview = async () => {
+    try {
+      setIsTyping(true);
+      setStatus("Starting interview...");
+
+      const { data } = await api.post("/api/interview/start", {
+        candidateId: DEFAULT_CANDIDATE_ID,
+      });
+
+      if (!data?.success) {
+        throw new Error(data?.message || "Unable to start interview.");
+      }
+
+      const firstQuestion = data?.currentQuestion;
+      const totalQuestions = Number(data?.progress?.total || 0);
+      const currentProgress = Number(data?.progress?.current || 1);
+
+      setSessionId(data.sessionId || "");
+      setTopic(firstQuestion?.topic || "Interview Topic");
+      setProgress({
+        current: currentProgress,
+        total: totalQuestions,
+      });
+      setCurrentQuestionNumber(currentProgress);
+      setQuestionsRemaining(Math.max(totalQuestions - currentProgress, 0));
+      setStatus("In Progress");
+      setMessages([
+        {
+          id: Date.now(),
+          sender: "ai",
+          text: firstQuestion?.topic || "Tell me about your experience.",
+          timestamp: createTimestamp(),
+        },
+      ]);
+    } catch (error) {
+      setStatus("Interview unavailable");
+      setMessages([
+        {
+          id: Date.now(),
+          sender: "ai",
+          text: error?.message || "Unable to start the interview right now.",
+          timestamp: createTimestamp(),
+        },
+      ]);
+    } finally {
+      setIsTyping(false);
+    }
+  };
+
+  useEffect(() => {
+    void startInterview();
+  }, []);
+
+  const handleSendMessage = async () => {
     const trimmed = draft.trim();
-    if (!trimmed) return;
+    if (!trimmed || !sessionId) return;
 
-    const timestamp = new Date().toLocaleTimeString([], {
-      hour: "2-digit",
-      minute: "2-digit",
-    });
-
+    const timestamp = createTimestamp();
     const userMessage = {
       id: Date.now(),
       sender: "user",
@@ -58,41 +102,77 @@ function InterviewPage() {
       timestamp,
     };
 
-    const nextIndex = currentQuestionIndex + 1;
-    const nextQuestion = interviewQuestions[nextIndex];
-
-    setAnswers((prev) => [...prev, trimmed]);
     setMessages((prev) => [...prev, userMessage]);
     setDraft("");
     setIsTyping(true);
+    setStatus("Thinking...");
 
-    setTimeout(() => {
-      if (nextQuestion) {
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: Date.now() + 1,
-            sender: "ai",
-            text: nextQuestion,
-            timestamp: new Date().toLocaleTimeString([], {
-              hour: "2-digit",
-              minute: "2-digit",
-            }),
-          },
-        ]);
-        setCurrentQuestionIndex(nextIndex);
-      } else {
-        navigate("/results", { replace: true });
+    try {
+      const { data } = await api.post("/api/interview/message", {
+        sessionId,
+        message: trimmed,
+      });
+
+      if (!data?.success) {
+        throw new Error(data?.message || "Unable to continue the interview.");
       }
 
+      const nextQuestion = data?.nextQuestion;
+      const aiMessage = data?.message || "Could you tell me a bit more about that?";
+      const interviewState = data?.interviewState || {};
+      const totalQuestions = Number(interviewState?.totalQuestions || progress.total || 0);
+      const nextNumber = Math.max(1, Number(interviewState?.currentQuestionIndex ?? 0) + 1);
+
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: Date.now() + 1,
+          sender: "ai",
+          text: aiMessage,
+          timestamp: createTimestamp(),
+        },
+      ]);
+
+      if (nextQuestion && nextQuestion.topic) {
+        setTopic(nextQuestion.topic);
+        setProgress({ current: nextNumber, total: totalQuestions });
+        setCurrentQuestionNumber(nextNumber);
+        setQuestionsRemaining(Math.max(totalQuestions - nextNumber, 0));
+        setStatus("In Progress");
+      } else {
+        setStatus("Completed");
+        setProgress({ current: totalQuestions, total: totalQuestions });
+        setCurrentQuestionNumber(totalQuestions || 1);
+        setQuestionsRemaining(0);
+        navigate("/results", {
+          replace: true,
+          state: {
+            ...data,
+            status: "completed",
+          },
+        });
+        return;
+      }
+    } catch (error) {
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: Date.now() + 2,
+          sender: "ai",
+          text: error?.message || "Sorry, something went wrong.",
+          timestamp: createTimestamp(),
+        },
+      ]);
+      setStatus("Interview unavailable");
+    } finally {
       setIsTyping(false);
-    }, 600);
+    }
   };
 
   const handleKeyDown = (event) => {
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
-      handleSendMessage();
+      void handleSendMessage();
     }
   };
 
@@ -103,8 +183,8 @@ function InterviewPage() {
 
         <div className="mb-6">
           <ProgressBar
-            currentQuestion={currentQuestionNumber}
-            totalQuestions={interviewQuestions.length}
+            currentQuestion={Math.max(currentQuestionNumber, progress.current || 1)}
+            totalQuestions={Math.max(progress.total || 1, 1)}
           />
         </div>
 
@@ -149,7 +229,7 @@ function InterviewPage() {
                   <motion.button
                     whileHover={{ scale: 1.02 }}
                     whileTap={{ scale: 0.98 }}
-                    onClick={handleSendMessage}
+                    onClick={() => void handleSendMessage()}
                     className="rounded-xl bg-gradient-to-r from-cyan-400 to-blue-500 px-4 py-3 text-sm font-semibold text-slate-950 shadow-lg shadow-cyan-500/20 transition hover:brightness-110"
                   >
                     Send
@@ -159,7 +239,11 @@ function InterviewPage() {
             </div>
           </main>
 
-          <InterviewSidebar />
+          <InterviewSidebar
+            topic={topic}
+            status={status}
+            questionsRemaining={questionsRemaining}
+          />
         </div>
       </div>
     </div>

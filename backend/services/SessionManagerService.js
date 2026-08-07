@@ -58,6 +58,11 @@ export function createSession(candidateId) {
     conversation: [],
     completedQuestions: [],
     completedTopics: [],
+    evaluationHistory: [],
+    topicScores: {},
+    followUpHistory: [],
+    currentDifficulty: "Intermediate",
+    currentTopicScore: 0,
     startedAt: new Date().toISOString(),
     completed: false,
     endedAt: null,
@@ -100,7 +105,7 @@ export function getCurrentQuestion(session) {
  * @param {string} message
  * @returns {{ session: object, nextQuestion: object | null, interviewState: object }}
  */
-export function recordAnswer(sessionId, message) {
+export function recordAnswer(sessionId, message, decision = null) {
   const session = getSession(sessionId);
 
   if (!session) {
@@ -129,8 +134,20 @@ export function recordAnswer(sessionId, message) {
     timestamp: new Date().toISOString(),
   });
 
-  const nextIndex = Number(session.currentQuestionIndex ?? 0) + 1;
+  const keepCurrentTopic = decision && ["stayOnCurrentTopic", "askFollowUp", "decreaseDifficulty", "increaseDifficulty"].includes(decision.action);
   const plan = Array.isArray(session?.plan?.interviewPlan) ? session.plan.interviewPlan : [];
+
+  if (keepCurrentTopic) {
+    const nextQuestion = decision?.nextQuestion || currentQuestion || null;
+    session.currentQuestion = nextQuestion;
+    return {
+      session,
+      nextQuestion,
+      interviewState: buildInterviewState(session),
+    };
+  }
+
+  const nextIndex = Number(session.currentQuestionIndex ?? 0) + 1;
 
   if (nextIndex < plan.length) {
     session.currentQuestionIndex = nextIndex;

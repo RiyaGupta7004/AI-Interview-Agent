@@ -1,15 +1,33 @@
 import OpenAI from "openai";
 
-const DEFAULT_MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
-const OPENAI_BASE_URL = process.env.OPENAI_BASE_URL || undefined;
+const DEFAULT_MODEL = "gpt-4o-mini";
 
-const client = OPENAI_API_KEY
-  ? new OpenAI({
-      apiKey: OPENAI_API_KEY,
-      baseURL: OPENAI_BASE_URL,
-    })
-  : null;
+function getClient() {
+  const apiKey = process.env.OPENAI_API_KEY?.trim();
+  const baseURL = process.env.OPENAI_BASE_URL?.trim();
+  const model = process.env.OPENAI_MODEL?.trim() || DEFAULT_MODEL;
+
+  if (!apiKey) {
+    throw new Error("OPENAI_API_KEY is missing. Set the environment variable before starting the backend.");
+  }
+
+  if (!baseURL) {
+    throw new Error("OPENAI_BASE_URL is missing. Set the environment variable before starting the backend.");
+  }
+
+  if (!model) {
+    throw new Error("OPENAI_MODEL is missing. Set the environment variable before starting the backend.");
+  }
+
+  if (!globalThis.__aiInterviewOpenaiClient) {
+    globalThis.__aiInterviewOpenaiClient = new OpenAI({
+      apiKey,
+      baseURL,
+    });
+  }
+
+  return globalThis.__aiInterviewOpenaiClient;
+}
 
 /**
  * Create a safe fallback response when the LLM is unavailable.
@@ -53,13 +71,10 @@ function buildMessages(promptObject = {}) {
  * @returns {Promise<{ message: string, usage: object, model: string, error?: boolean }>} 
  */
 export async function generateResponse(promptObject = {}) {
-  const model = process.env.OPENAI_MODEL || DEFAULT_MODEL;
-
-  if (!client) {
-    return createFallbackResponse(model);
-  }
+  const model = process.env.OPENAI_MODEL?.trim() || DEFAULT_MODEL;
 
   try {
+    const client = getClient();
     const completion = await client.chat.completions.create({
       model,
       temperature: 0.7,
@@ -80,6 +95,19 @@ export async function generateResponse(promptObject = {}) {
       error: false,
     };
   } catch (error) {
+    const isConfigError = error instanceof Error && /OPENAI_(API_KEY|BASE_URL|MODEL)/.test(error.message);
+
+    if (isConfigError) {
+      console.error("OpenAI configuration error:", error.message);
+      throw error;
+    }
+
+    console.error("OpenAI API request failed.");
+    console.error("status code:", error?.status || error?.response?.status || "unknown");
+    console.error("error code:", error?.code || error?.response?.data?.error?.code || "unknown");
+    console.error("error message:", error?.message || "unknown");
+    console.error("complete response body:", error?.response?.data || "no response body");
+    console.error("full error object:", error);
     return createFallbackResponse(model);
   }
 }

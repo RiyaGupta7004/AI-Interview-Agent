@@ -1,6 +1,8 @@
 import { createSession, getSession, recordAnswer, endSession } from "../services/SessionManagerService.js";
 import { buildPrompt } from "../services/PromptBuilderService.js";
 import { generateResponse } from "../services/openai.service.js";
+import { processAnswer } from "../services/AdaptiveInterviewEngine.js";
+import { generateInterviewReport } from "../services/ReportGeneratorService.js";
 
 /**
  * Start an interview session for the requested candidate.
@@ -64,27 +66,89 @@ export const sendMessage = async (req, res) => {
       });
     }
 
-    const { nextQuestion, interviewState } = recordAnswer(sessionId, message || "");
+    const currentQuestion = getSession(sessionId)?.plan?.interviewPlan?.[getSession(sessionId).currentQuestionIndex] || null;
+    const decisionResult = processAnswer(session, currentQuestion, message || "");
+    const decision = {
+      evaluation: decisionResult.evaluation,
+      action: decisionResult.action,
+      reason: decisionResult.reason,
+      difficulty: decisionResult.state?.currentDifficulty || currentQuestion?.difficulty || "Intermediate",
+      nextQuestion: decisionResult.nextQuestion,
+      finishInterview: Boolean(decisionResult.finishInterview),
+      stayOnTopic: decisionResult.action !== "moveToNextTopic",
+    };
+
+    const currentTopic = currentQuestion?.topic || session?.currentTopic;
+    if (currentTopic) {
+      const avgScore = Number(
+        ((Number(decisionResult.evaluation?.confidenceScore || 0) + Number(decisionResult.evaluation?.coverageScore || 0) + Number(decisionResult.evaluation?.reasoningScore || 0)) / 3).toFixed(2)
+      );
+
+      session.topicScores = {
+        ...(session.topicScores || {}),
+        [currentTopic]: avgScore,
+      };
+
+      session.evaluationHistory = Array.isArray(session.evaluationHistory)
+        ? [...session.evaluationHistory, decisionResult.evaluation]
+        : [decisionResult.evaluation];
+
+      session.followUpHistory = Array.isArray(session.followUpHistory)
+        ? [
+            ...session.followUpHistory,
+            {
+              topic: currentTopic,
+              action: decisionResult.action,
+              difficulty: decision.difficulty,
+              reason: decisionResult.reason,
+            },
+          ]
+        : [
+            {
+              topic: currentTopic,
+              action: decisionResult.action,
+              difficulty: decision.difficulty,
+              reason: decisionResult.reason,
+            },
+          ];
+
+      session.currentDifficulty = decision.difficulty;
+      session.currentTopicScore = avgScore;
+    }
+
+    const { nextQuestion, interviewState } = recordAnswer(sessionId, message || "", decision);
 
     if (!nextQuestion) {
       const summary = endSession(sessionId);
+      const report = generateInterviewReport(session);
       return res.status(200).json({
         success: true,
         message: "Thank you. The interview is complete.",
         summary,
+        report,
         error: false,
       });
     }
 
+    const finalNextQuestion = {
+      ...(nextQuestion || currentQuestion || {}),
+      decision,
+      evaluation: decisionResult.evaluation,
+      reason: decisionResult.reason,
+      previousQuestion: currentQuestion?.topic || "N/A",
+      candidateAnswer: message || "",
+    };
+
     const prompt = buildPrompt(
       session.plan,
-      nextQuestion,
+      finalNextQuestion,
       session.conversation,
       {
         name: session.candidateName,
         role: session.role,
         experience: session.experience,
-      }
+      },
+      decision
     );
 
     const response = await generateResponse(prompt);
@@ -107,7 +171,8 @@ export const sendMessage = async (req, res) => {
       },
       model: response?.model || process.env.OPENAI_MODEL || "unknown",
       interviewState,
-      nextQuestion,
+      nextQuestion: finalNextQuestion,
+      decision,
       error: false,
     });
   } catch (error) {
@@ -135,11 +200,22 @@ export const endInterview = (req, res) => {
       });
     }
 
+    const session = getSession(sessionId);
+
+    if (!session) {
+      return res.status(404).json({
+        success: false,
+        message: "Interview session not found.",
+      });
+    }
+
     const summary = endSession(sessionId);
+    const report = generateInterviewReport(session);
 
     return res.status(200).json({
       success: true,
       ...summary,
+      report,
     });
   } catch (error) {
     return res.status(400).json({

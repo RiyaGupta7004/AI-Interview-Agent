@@ -8,10 +8,12 @@ function SidebarCard({ label, value, detail }) {
   );
 }
 
-function InterviewSidebar({ topic, status, questionsRemaining }) {
-  const currentTopic = topic || "Retrieval-Augmented Generation";
-  const currentStatus = status || "In Progress";
-  const remaining = questionsRemaining ?? 7;
+function InterviewSidebar({ topic, status, questionsRemaining, candidateName }) {
+  const currentTopic = topic || "Preparing topic...";
+  const currentStatus = status || "Starting...";
+  const remaining = Number.isFinite(Number(questionsRemaining))
+    ? Math.max(0, Number(questionsRemaining))
+    : 0;
 
   return (
     <aside className="w-full space-y-4 lg:w-80">
@@ -22,6 +24,14 @@ function InterviewSidebar({ topic, status, questionsRemaining }) {
           Assessing the candidate’s understanding of architecture, tradeoffs, and practical use cases.
         </p>
       </div>
+
+      {candidateName ? (
+        <SidebarCard
+          label="Candidate"
+          value={candidateName}
+          detail="Interview plan personalized from cohort progress."
+        />
+      ) : null}
 
       <SidebarCard
         label="Interview Status"

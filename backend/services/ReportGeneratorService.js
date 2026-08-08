@@ -199,39 +199,60 @@ export function generateInterviewReport(session = {}) {
   const topicScores = session?.topicScores || {};
   const candidate = session?.candidate || {};
 
+  const hasEvaluations = evaluationHistory.length > 0;
   const technicalValues = evaluationHistory.map((entry) => Number(entry?.coverageScore || 0));
   const reasoningValues = evaluationHistory.map((entry) => Number(entry?.reasoningScore || 0));
   const communicationValues = evaluationHistory.map((entry) => Number(entry?.communicationScore || 0));
   const confidenceValues = evaluationHistory.map((entry) => Number(entry?.confidenceScore || 0));
 
-  const technical = clamp(Math.round(average(technicalValues) || 72), 0, 100);
-  const reasoning = clamp(Math.round(average(reasoningValues) || 68), 0, 100);
-  const communication = clamp(Math.round(average(communicationValues) || 74), 0, 100);
-  const confidence = clamp(Math.round(average(confidenceValues) || 70), 0, 100);
-  const overallScore = clamp(Math.round((technical + reasoning + communication + confidence) / 4), 0, 100);
-  const overallLevel = getOverallLevel(overallScore);
+  // Use real averages only — never invent placeholder scores when history is empty.
+  const technical = hasEvaluations ? clamp(Math.round(average(technicalValues)), 0, 100) : 0;
+  const reasoning = hasEvaluations ? clamp(Math.round(average(reasoningValues)), 0, 100) : 0;
+  const communication = hasEvaluations ? clamp(Math.round(average(communicationValues)), 0, 100) : 0;
+  const confidence = hasEvaluations ? clamp(Math.round(average(confidenceValues)), 0, 100) : 0;
+  const overallScore = hasEvaluations
+    ? clamp(Math.round((technical + reasoning + communication + confidence) / 4), 0, 100)
+    : 0;
+  const overallLevel = hasEvaluations ? getOverallLevel(overallScore) : "Insufficient Data";
 
-  const topicBreakdown = plan.map((entry) => {
-    const topic = entry?.topic || "General Topic";
-    const score = clamp(Number(topicScores[topic] ?? Math.max(35, 100 - (entry?.order || 1) * 8)), 0, 100);
-    const level = getTopicLevel(score);
-    const summary = buildTopicSummary(topic, score, followUpHistory.find((item) => item?.topic === topic)?.action || "");
+  const answeredTopics = new Set(Object.keys(topicScores));
+  const topicBreakdown = plan
+    .map((entry) => {
+      const topic = entry?.topic || "General Topic";
+      if (!Object.prototype.hasOwnProperty.call(topicScores, topic)) {
+        return null;
+      }
 
-    return {
-      topic,
-      score,
-      level,
-      summary,
-    };
-  });
+      const score = clamp(Number(topicScores[topic]), 0, 100);
+      const level = getTopicLevel(score);
+      const summary = buildTopicSummary(
+        topic,
+        score,
+        followUpHistory.find((item) => item?.topic === topic)?.action || ""
+      );
 
-  const strengths = Array.isArray(session?.strengths) && session.strengths.length > 0
-    ? session.strengths
-    : topicBreakdown.filter((item) => item.score >= 70).slice(0, 3).map((item) => item.topic);
+      return {
+        topic,
+        score,
+        level,
+        summary,
+      };
+    })
+    .filter(Boolean);
 
-  const weaknesses = Array.isArray(session?.weakAreas) && session.weakAreas.length > 0
-    ? session.weakAreas
-    : topicBreakdown.filter((item) => item.score < 60).slice(0, 3).map((item) => item.topic);
+  // Prefer live interview signals over pre-interview mission history.
+  const liveStrongTopics = Array.isArray(session?.strongTopics) ? session.strongTopics : [];
+  const liveWeakTopics = Array.isArray(session?.weakTopics) ? session.weakTopics : [];
+
+  const strengths =
+    liveStrongTopics.length > 0
+      ? liveStrongTopics.slice(0, 3)
+      : topicBreakdown.filter((item) => item.score >= 70).slice(0, 3).map((item) => item.topic);
+
+  const weaknesses =
+    liveWeakTopics.length > 0
+      ? liveWeakTopics.slice(0, 3)
+      : topicBreakdown.filter((item) => item.score < 60).slice(0, 3).map((item) => item.topic);
 
   const recommendations = buildRecommendations(session, topicBreakdown);
 
@@ -240,16 +261,25 @@ export function generateInterviewReport(session = {}) {
       return current;
     }
     return best;
-  }, topicBreakdown[0] || { topic: "Core Fundamentals", score: 0, summary: "Continue building fundamentals." });
+  }, topicBreakdown[0] || null);
 
   const weakestTopic = topicBreakdown.reduce((worst, current) => {
     if (!worst || current.score < worst.score) {
       return current;
     }
     return worst;
-  }, topicBreakdown[0] || { topic: "Core Fundamentals", score: 0, summary: "Continue building fundamentals." });
+  }, topicBreakdown[0] || null);
 
-  const summary = `You demonstrated strong conceptual understanding of ${strongestTopic.topic}. However, your explanations of ${weakestTopic.topic} lacked depth, indicating a need for stronger system-level understanding.`;
+  let summary = "Not enough answered topics were recorded to produce a detailed interview summary.";
+  if (strongestTopic && weakestTopic && strongestTopic.topic === weakestTopic.topic) {
+    summary = `Performance on ${strongestTopic.topic} was the clearest signal from this interview (score ${strongestTopic.score}).`;
+  } else if (strongestTopic && weakestTopic) {
+    summary = `Strongest area was ${strongestTopic.topic} (${strongestTopic.score}). Weakest area was ${weakestTopic.topic} (${weakestTopic.score}), which needs deeper practice.`;
+  } else if (strongestTopic) {
+    summary = `Performance on ${strongestTopic.topic} was the main signal from this interview (score ${strongestTopic.score}).`;
+  }
+
+  const unansweredCount = Math.max(plan.length - answeredTopics.size, 0);
 
   return {
     candidate: {
@@ -263,6 +293,7 @@ export function generateInterviewReport(session = {}) {
       duration: getDurationFromSession(session),
       overallLevel,
       overallScore,
+      unansweredTopics: unansweredCount,
     },
     scores: {
       technical,
@@ -270,11 +301,11 @@ export function generateInterviewReport(session = {}) {
       communication,
       confidence,
     },
-    strengths: strengths.length > 0 ? strengths : [strongestTopic.topic],
-    weaknesses: weaknesses.length > 0 ? weaknesses : [weakestTopic.topic],
+    strengths,
+    weaknesses,
     topicBreakdown,
     recommendations,
-    hiringRecommendation: getHiringRecommendation(overallScore),
+    hiringRecommendation: hasEvaluations ? getHiringRecommendation(overallScore) : "Insufficient Data",
     summary,
   };
 }

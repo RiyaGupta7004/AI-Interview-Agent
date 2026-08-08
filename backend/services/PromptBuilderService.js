@@ -29,7 +29,8 @@ function getTimeAwareGreeting() {
 }
 
 /**
- * Build a compact summary of the most recent prior answers.
+ * Build a compact summary of prior conversation turns.
+ * Keeps a short preface for older turns and includes recent turns in fuller detail.
  * @param {Array<object>} previousConversation
  * @returns {string}
  */
@@ -38,15 +39,28 @@ function buildConversationSummary(previousConversation = []) {
     return "No prior answers yet.";
   }
 
-  const recentItems = previousConversation.slice(-4);
+  const MAX_RECENT = 16;
+  const MAX_CHARS = 320;
 
-  return recentItems
-    .map((entry) => {
-      const role = entry?.role === "user" ? "Candidate" : "Interviewer";
-      const content = normalizeText(entry?.content || entry?.text || entry?.message);
-      return `${role}: ${content}`;
-    })
-    .join("\n");
+  const formatTurn = (entry) => {
+    const role = entry?.role === "user" ? "Candidate" : "Interviewer";
+    let content = normalizeText(entry?.content || entry?.text || entry?.message);
+    if (content.length > MAX_CHARS) {
+      content = `${content.slice(0, MAX_CHARS - 1).trim()}…`;
+    }
+    return `${role}: ${content}`;
+  };
+
+  if (previousConversation.length <= MAX_RECENT) {
+    return previousConversation.map(formatTurn).join("\n");
+  }
+
+  const olderCount = previousConversation.length - MAX_RECENT;
+  const recentItems = previousConversation.slice(-MAX_RECENT);
+  return [
+    `Earlier interview context: ${olderCount} prior turns were exchanged before the recent window below. Keep continuity with themes already discussed.`,
+    recentItems.map(formatTurn).join("\n"),
+  ].join("\n");
 }
 
 /**
@@ -112,6 +126,15 @@ function buildDeveloperPrompt(interviewPlan = {}, currentQuestion = {}, decision
     `communication=${evaluation.communicationScore ?? "n/a"}`,
   ].join(", ");
 
+  const objectives = Array.isArray(currentQuestion?.objectives)
+    ? currentQuestion.objectives
+    : Array.isArray(decision?.objectives)
+      ? decision.objectives
+      : [];
+  const objectiveText = objectives.length
+    ? objectives.slice(0, 4).map((item, index) => `${index + 1}. ${item}`).join(" ")
+    : "Use the topic's expected technical understanding.";
+
   const decisionText = JSON.stringify({
     evaluation: evaluation.classification || "UNKNOWN",
     action: decision.action || "FOLLOW_UP",
@@ -131,11 +154,13 @@ function buildDeveloperPrompt(interviewPlan = {}, currentQuestion = {}, decision
     "Generate ONLY one interviewer message.",
     "Never use raw curriculum titles as the spoken question.",
     "Ask a natural interview question about the current topic.",
+    "If a candidate answer snippet is provided in the suggested intent, reference it naturally.",
     suggestedQuestion
       ? `Suggested question intent to paraphrase naturally: ${suggestedQuestion}`
       : "Craft one clear spoken question for the current topic.",
     `The current question is #${currentOrder}: ${currentTopic}.`,
     `Current difficulty: ${difficulty}.`,
+    `Curriculum objectives to probe (internal): ${objectiveText}`,
     `Decision object: ${decisionText}`,
     `Interview plan topics: ${planSummary}`,
     `Evaluation context: ${evaluationText}.`,
@@ -212,6 +237,9 @@ function buildUserPrompt(interviewPlan = {}, currentQuestion = {}, previousConve
     `Evaluation: classification=${evaluation.classification || "UNKNOWN"}, confidence=${evaluation.confidenceScore ?? "n/a"}, coverage=${evaluation.coverageScore ?? "n/a"}, reasoning=${evaluation.reasoningScore ?? "n/a"}, communication=${evaluation.communicationScore ?? "n/a"}.`,
     `Reason for next question: ${reasonForNextQuestion}.`,
     `Suggested question intent: ${suggestedQuestion || "Ask one natural question for the current topic and Decision action."}.`,
+    Array.isArray(currentQuestion?.objectives) && currentQuestion.objectives.length
+      ? `Curriculum objectives to probe (internal): ${currentQuestion.objectives.slice(0, 4).join(" | ")}.`
+      : "",
     `Decision object: ${decisionSummary}`,
     `Interview plan context (internal only): ${Array.isArray(interviewPlan?.interviewPlan) ? interviewPlan.interviewPlan.map((entry) => entry?.topic || entry?.moduleName || "Topic").join(", ") : "N/A"}`,
     "Conversation summary:",
@@ -221,6 +249,8 @@ function buildUserPrompt(interviewPlan = {}, currentQuestion = {}, previousConve
     "- You MUST NOT invent interview flow.",
     "- You MUST NOT change topic unless Decision.action is moveToNextTopic.",
     "- You MUST NOT skip ahead.",
+    "- Reference the candidate's previous answer when asking a follow-up.",
+    "- Use the full conversation summary for continuity, not only the latest turn.",
     "- Paraphrase the suggested question intent naturally; do not paste curriculum titles as questions.",
     "- Ask only one question at a time.",
     "- Never reveal answers or give hints that solve the problem.",
@@ -229,7 +259,7 @@ function buildUserPrompt(interviewPlan = {}, currentQuestion = {}, previousConve
     "- Use a professional, senior-interviewer tone.",
     "- Keep the next response under 120 words.",
     "Generate only the next interviewer message, not the interview flow decision."
-  ].join("\n");
+  ].filter(Boolean).join("\n");
 }
 
 /**

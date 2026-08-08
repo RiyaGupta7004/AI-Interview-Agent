@@ -1,11 +1,15 @@
 import express from "express";
 import {
+  getCandidates,
   startInterview,
   sendMessage,
   endInterview,
 } from "../controllers/interview.controller.js";
 
 const router = express.Router();
+
+// GET /api/interview/candidates
+router.get("/candidates", getCandidates);
 
 // POST /api/interview/start
 router.post("/start", startInterview);

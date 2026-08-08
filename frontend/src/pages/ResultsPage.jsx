@@ -157,24 +157,36 @@ function ResultsPage() {
           <div className="rounded-3xl border border-slate-700/80 bg-slate-900/80 p-6 shadow-xl shadow-slate-950/30">
             <h2 className="text-lg font-semibold text-white">Strengths</h2>
             <ul className="mt-5 space-y-3">
-              {(data.strengths || []).map((item) => (
-                <li key={item} className="flex items-start gap-3 rounded-2xl border border-emerald-500/10 bg-emerald-500/5 p-3 text-slate-200">
-                  <span className="mt-1 inline-flex h-5 w-5 items-center justify-center rounded-full bg-emerald-500/15 text-xs text-emerald-300">✓</span>
-                  <span>{item}</span>
+              {(data.strengths || []).length > 0 ? (
+                (data.strengths || []).map((item) => (
+                  <li key={item} className="flex items-start gap-3 rounded-2xl border border-emerald-500/10 bg-emerald-500/5 p-3 text-slate-200">
+                    <span className="mt-1 inline-flex h-5 w-5 items-center justify-center rounded-full bg-emerald-500/15 text-xs text-emerald-300">✓</span>
+                    <span>{item}</span>
+                  </li>
+                ))
+              ) : (
+                <li className="rounded-2xl border border-slate-700/80 bg-slate-950/40 p-3 text-sm text-slate-400">
+                  No clear strengths recorded from this session.
                 </li>
-              ))}
+              )}
             </ul>
           </div>
 
           <div className="rounded-3xl border border-slate-700/80 bg-slate-900/80 p-6 shadow-xl shadow-slate-950/30">
             <h2 className="text-lg font-semibold text-white">Needs Improvement</h2>
             <ul className="mt-5 space-y-3">
-              {(data.weaknesses || []).map((item) => (
-                <li key={item} className="flex items-start gap-3 rounded-2xl border border-amber-500/10 bg-amber-500/5 p-3 text-slate-200">
-                  <span className="mt-1 inline-flex h-5 w-5 items-center justify-center rounded-full bg-amber-500/15 text-xs text-amber-300">!</span>
-                  <span>{item}</span>
+              {(data.weaknesses || []).length > 0 ? (
+                (data.weaknesses || []).map((item) => (
+                  <li key={item} className="flex items-start gap-3 rounded-2xl border border-amber-500/10 bg-amber-500/5 p-3 text-slate-200">
+                    <span className="mt-1 inline-flex h-5 w-5 items-center justify-center rounded-full bg-amber-500/15 text-xs text-amber-300">!</span>
+                    <span>{item}</span>
+                  </li>
+                ))
+              ) : (
+                <li className="rounded-2xl border border-slate-700/80 bg-slate-950/40 p-3 text-sm text-slate-400">
+                  No improvement areas recorded from this session.
                 </li>
-              ))}
+              )}
             </ul>
           </div>
         </div>
@@ -182,23 +194,27 @@ function ResultsPage() {
         <div className="mb-8 rounded-3xl border border-slate-700/80 bg-slate-900/80 p-6 shadow-xl shadow-slate-950/30">
           <h2 className="text-lg font-semibold text-white">Topic Breakdown</h2>
           <div className="mt-6 space-y-5">
-            {(data.topicBreakdown || []).map((item) => (
-              <div key={item.topic}>
-                <div className="mb-2 flex items-center justify-between text-sm text-slate-300">
-                  <span className="font-medium text-white">{item.topic}</span>
-                  <span>{item.score}%</span>
+            {(data.topicBreakdown || []).length > 0 ? (
+              (data.topicBreakdown || []).map((item) => (
+                <div key={item.topic}>
+                  <div className="mb-2 flex items-center justify-between text-sm text-slate-300">
+                    <span className="font-medium text-white">{item.topic}</span>
+                    <span>{item.score}%</span>
+                  </div>
+                  <div className="h-2.5 overflow-hidden rounded-full bg-slate-800">
+                    <motion.div
+                      initial={{ width: 0 }}
+                      animate={{ width: `${item.score}%` }}
+                      transition={{ duration: 0.8, ease: "easeOut" }}
+                      className="h-full rounded-full bg-gradient-to-r from-cyan-400 via-sky-500 to-blue-500"
+                    />
+                  </div>
+                  <p className="mt-2 text-sm text-slate-400">{item.level} · {item.summary || item.notes}</p>
                 </div>
-                <div className="h-2.5 overflow-hidden rounded-full bg-slate-800">
-                  <motion.div
-                    initial={{ width: 0 }}
-                    animate={{ width: `${item.score}%` }}
-                    transition={{ duration: 0.8, ease: "easeOut" }}
-                    className="h-full rounded-full bg-gradient-to-r from-cyan-400 via-sky-500 to-blue-500"
-                  />
-                </div>
-                <p className="mt-2 text-sm text-slate-400">{item.level} · {item.summary}</p>
-              </div>
-            ))}
+              ))
+            ) : (
+              <p className="text-sm text-slate-400">No answered topics were scored in this session.</p>
+            )}
           </div>
         </div>
 

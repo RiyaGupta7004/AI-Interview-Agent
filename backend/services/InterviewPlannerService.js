@@ -74,6 +74,81 @@ export function findCurriculumModule(curriculum, day) {
 }
 
 /**
+ * Normalize text for loose topic matching.
+ * @param {string} value
+ * @returns {string}
+ */
+function normalizeTopicKey(value = "") {
+  return String(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+/**
+ * Resolve curriculum day context (objectives/tools) for a plan topic.
+ * @param {string} topic
+ * @param {number} [day]
+ * @returns {{ day: number|null, title: string, objectives: string[], tools: string[], moduleName: string }}
+ */
+export function getCurriculumContextForTopic(topic = "", day = null) {
+  const curriculum = loadCurriculum();
+  let dayEntry = day != null ? findCurriculumDay(curriculum, day) : null;
+
+  if (!dayEntry && topic) {
+    const normalizedTopic = normalizeTopicKey(topic);
+    const days = Array.isArray(curriculum?.days) ? curriculum.days : [];
+    dayEntry =
+      days.find((entry) => normalizeTopicKey(entry?.title) === normalizedTopic) ||
+      days.find((entry) => {
+        const title = normalizeTopicKey(entry?.title || "");
+        return title.includes(normalizedTopic) || normalizedTopic.includes(title);
+      }) ||
+      null;
+  }
+
+  const module = dayEntry ? findCurriculumModule(curriculum, dayEntry.day) : null;
+
+  return {
+    day: dayEntry?.day ?? (day != null ? Number(day) : null),
+    title: dayEntry?.title || topic || "",
+    objectives: Array.isArray(dayEntry?.objectives) ? dayEntry.objectives : [],
+    tools: Array.isArray(dayEntry?.tools) ? dayEntry.tools : [],
+    moduleName: module?.title || "",
+  };
+}
+
+/**
+ * List candidates available for interview selection.
+ * @returns {Array<object>}
+ */
+export function listCandidates() {
+  const data = loadCandidates();
+  const list = Array.isArray(data?.candidates) ? data.candidates : [];
+
+  return list.map((entry) => {
+    const member = entry?.member || {};
+    const missions = Array.isArray(entry?.missions) ? entry.missions : [];
+    const skipped = missions.filter((mission) => mission?.skipped).length;
+    const passed = missions.filter((mission) => mission?.passed === true).length;
+
+    return {
+      id: member.id,
+      name: member.name,
+      role: member.jobRole,
+      experience: member.yearsExperience,
+      education: member.education,
+      status: member.status,
+      missionsCompleted: Number(entry?.signals?.missionsCompleted ?? passed),
+      missionsFirstTry: Number(entry?.signals?.missionsFirstTry ?? 0),
+      commitDays: Number(entry?.signals?.commitDays ?? 0),
+      skippedTopics: skipped,
+      missionCount: missions.length,
+    };
+  });
+}
+
+/**
  * Calculate strengths from missions with strong completion patterns.
  * @param {object} candidate Candidate record.
  * @returns {string[]} Strength topic titles.
@@ -276,6 +351,8 @@ export default {
   findCandidate,
   findCurriculumDay,
   findCurriculumModule,
+  getCurriculumContextForTopic,
+  listCandidates,
   calculateStrengths,
   calculateWeaknesses,
   determineDifficulty,

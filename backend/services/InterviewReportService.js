@@ -50,37 +50,44 @@ export function generateInterviewReport(session = {}) {
   const curriculum = loadCurriculum();
   const plan = Array.isArray(session?.plan?.interviewPlan) ? session.plan.interviewPlan : [];
   const evaluationHistory = Array.isArray(session?.evaluationHistory) ? session.evaluationHistory : [];
-  const strengths = Array.isArray(session?.strengths) ? session.strengths : [];
-  const weaknesses = Array.isArray(session?.weakAreas) ? session.weakAreas : [];
   const topicScores = session?.topicScores || {};
 
+  const hasEvaluations = evaluationHistory.length > 0;
   const technicalValues = evaluationHistory.map((entry) => Number(entry?.coverageScore || 0));
   const reasoningValues = evaluationHistory.map((entry) => Number(entry?.reasoningScore || 0));
   const communicationValues = evaluationHistory.map((entry) => Number(entry?.communicationScore || 0));
   const confidenceValues = evaluationHistory.map((entry) => Number(entry?.confidenceScore || 0));
 
-  const technicalScore = clamp(Math.round(average(technicalValues) || 72), 0, 100);
-  const reasoningScore = clamp(Math.round(average(reasoningValues) || 68), 0, 100);
-  const communicationScore = clamp(Math.round(average(communicationValues) || 70), 0, 100);
-  const confidenceScore = clamp(Math.round(average(confidenceValues) || 74), 0, 100);
+  const technicalScore = hasEvaluations ? clamp(Math.round(average(technicalValues)), 0, 100) : 0;
+  const reasoningScore = hasEvaluations ? clamp(Math.round(average(reasoningValues)), 0, 100) : 0;
+  const communicationScore = hasEvaluations ? clamp(Math.round(average(communicationValues)), 0, 100) : 0;
+  const confidenceScore = hasEvaluations ? clamp(Math.round(average(confidenceValues)), 0, 100) : 0;
 
-  const overallScore = clamp(
-    Math.round((technicalScore + reasoningScore + communicationScore + confidenceScore) / 4),
-    0,
-    100
-  );
+  const overallScore = hasEvaluations
+    ? clamp(
+        Math.round((technicalScore + reasoningScore + communicationScore + confidenceScore) / 4),
+        0,
+        100
+      )
+    : 0;
 
-  const topicBreakdown = plan.map((entry) => {
-    const topicKey = entry?.topic || "Topic";
-    const score = Number(topicScores[topicKey] ?? Math.max(35, clamp((technicalScore + reasoningScore) / 2 - (entry?.order || 1) * 3, 0, 100)));
+  const topicBreakdown = plan
+    .map((entry) => {
+      const topicKey = entry?.topic || "Topic";
+      if (!Object.prototype.hasOwnProperty.call(topicScores, topicKey)) {
+        return null;
+      }
 
-    return {
-      topic: topicKey,
-      score: clamp(Math.round(score), 0, 100),
-      level: getLevel(score),
-      notes: buildReasonForTopic(topicKey, score),
-    };
-  });
+      const score = clamp(Math.round(Number(topicScores[topicKey])), 0, 100);
+
+      return {
+        topic: topicKey,
+        score,
+        level: getLevel(score),
+        notes: buildReasonForTopic(topicKey, score),
+      };
+    })
+    .filter(Boolean);
 
   const recommendedCurriculum = topicBreakdown
     .filter((item) => item.score < 75)
@@ -99,16 +106,23 @@ export function generateInterviewReport(session = {}) {
     })
     .filter((item) => item.day > 0);
 
-  const finalStrengths = Array.isArray(strengths) && strengths.length > 0
-    ? strengths
-    : topicBreakdown.filter((item) => item.score >= 75).slice(0, 3).map((item) => item.topic);
+  const liveStrongTopics = Array.isArray(session?.strongTopics) ? session.strongTopics : [];
+  const liveWeakTopics = Array.isArray(session?.weakTopics) ? session.weakTopics : [];
 
-  const finalWeaknesses = Array.isArray(weaknesses) && weaknesses.length > 0
-    ? weaknesses
-    : topicBreakdown.filter((item) => item.score < 60).slice(0, 3).map((item) => item.topic);
+  const finalStrengths =
+    liveStrongTopics.length > 0
+      ? liveStrongTopics.slice(0, 3)
+      : topicBreakdown.filter((item) => item.score >= 75).slice(0, 3).map((item) => item.topic);
 
-  const overallLevel = getLevel(overallScore);
-  const summary = `${session?.candidateName || "Candidate"} demonstrated ${overallLevel.toLowerCase()} interview performance across the core AI curriculum. The candidate showed ${finalStrengths.length ? finalStrengths[0] : "strong fundamentals"} as a key area of strength, while ${finalWeaknesses.length ? finalWeaknesses[0] : "remaining gaps"} should be reinforced with targeted practice before a final hiring decision.`;
+  const finalWeaknesses =
+    liveWeakTopics.length > 0
+      ? liveWeakTopics.slice(0, 3)
+      : topicBreakdown.filter((item) => item.score < 60).slice(0, 3).map((item) => item.topic);
+
+  const overallLevel = hasEvaluations ? getLevel(overallScore) : "Insufficient Data";
+  const summary = hasEvaluations
+    ? `${session?.candidateName || "Candidate"} demonstrated ${overallLevel.toLowerCase()} interview performance across the covered topics. ${finalStrengths.length ? `Strength: ${finalStrengths[0]}.` : ""} ${finalWeaknesses.length ? `Needs work: ${finalWeaknesses[0]}.` : ""}`.trim()
+    : "Not enough evaluation data was collected to produce a reliable interview summary.";
 
   return {
     overallLevel,
@@ -120,16 +134,8 @@ export function generateInterviewReport(session = {}) {
     strengths: finalStrengths,
     weaknesses: finalWeaknesses,
     topicBreakdown,
-    recommendedCurriculum: recommendedCurriculum.length > 0
-      ? recommendedCurriculum
-      : [
-          {
-            day: 12,
-            module: "LLM Core, Prompting & Fine-Tuning",
-            reason: "Prompt engineering responses lacked depth and practical reasoning.",
-          },
-        ],
-    hiringRecommendation: getHiringRecommendation(overallScore),
+    recommendedCurriculum,
+    hiringRecommendation: hasEvaluations ? getHiringRecommendation(overallScore) : "Insufficient Data",
     summary,
   };
 }

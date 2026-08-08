@@ -24,12 +24,12 @@ function clamp(value, min, max) {
 }
 
 /**
- * Create a small keyword bag from the current topic.
- * @param {string} topic
+ * Create a small keyword bag from free text.
+ * @param {string} text
  * @returns {string[]}
  */
-function extractTopicKeywords(topic = "") {
-  return String(topic)
+function extractKeywords(text = "") {
+  return String(text)
     .toLowerCase()
     .replace(/[^a-z0-9\s]/g, " ")
     .split(/\s+/)
@@ -38,21 +38,68 @@ function extractTopicKeywords(topic = "") {
 }
 
 /**
- * Estimate whether the answer is likely relevant to the topic.
+ * Create a small keyword bag from the current topic.
+ * @param {string} topic
+ * @returns {string[]}
+ */
+function extractTopicKeywords(topic = "") {
+  return extractKeywords(topic);
+}
+
+/**
+ * Estimate whether the answer is likely relevant to the topic and objectives.
  * @param {string} answer
  * @param {string} topic
+ * @param {object} [curriculumContext]
  * @returns {number}
  */
-function estimateTopicCoverage(answer = "", topic = "") {
+function estimateTopicCoverage(answer = "", topic = "", curriculumContext = {}) {
   const text = String(answer).toLowerCase();
-  const keywords = extractTopicKeywords(topic);
+  const topicKeywords = extractTopicKeywords(topic);
+  const objectiveKeywords = extractKeywords((curriculumContext?.objectives || []).join(" "));
+  const toolKeywords = extractKeywords((curriculumContext?.tools || []).join(" "));
+  const keywords = [...new Set([...topicKeywords, ...objectiveKeywords, ...toolKeywords])];
 
   if (!keywords.length) {
     return Math.min(text.length / 80, 1) * 100;
   }
 
   const matches = keywords.filter((keyword) => text.includes(keyword)).length;
-  return clamp((matches / Math.max(keywords.length, 1)) * 100, 0, 100);
+  const coverage = (matches / Math.max(keywords.length, 1)) * 100;
+
+  const objectives = Array.isArray(curriculumContext?.objectives) ? curriculumContext.objectives : [];
+  let objectiveHits = 0;
+  for (const objective of objectives) {
+    const objectiveWords = extractKeywords(objective).slice(0, 4);
+    if (objectiveWords.some((word) => text.includes(word))) {
+      objectiveHits += 1;
+    }
+  }
+  const objectiveBoost = objectives.length ? (objectiveHits / objectives.length) * 25 : 0;
+
+  return clamp(coverage + objectiveBoost, 0, 100);
+}
+
+/**
+ * Pull a short snippet from the candidate answer for follow-up grounding.
+ * @param {string} answer
+ * @param {number} maxLen
+ * @returns {string}
+ */
+function extractAnswerSnippet(answer = "", maxLen = 90) {
+  const cleaned = String(answer || "").replace(/\s+/g, " ").trim();
+  if (!cleaned) {
+    return "";
+  }
+
+  const clauseMatch = cleaned.match(
+    /(?:because|for example|such as|this means|in practice|I would|we used)[^.!?]{8,120}/i
+  );
+  const snippet = (clauseMatch?.[0] || cleaned).trim();
+  if (snippet.length <= maxLen) {
+    return snippet;
+  }
+  return `${snippet.slice(0, Math.max(0, maxLen - 1)).trim()}…`;
 }
 
 /**
@@ -60,20 +107,14 @@ function estimateTopicCoverage(answer = "", topic = "") {
  * @param {string} answer
  * @param {string} question
  * @param {object} session
- * @returns {{
- *   classification: string,
- *   confidenceScore: number,
- *   coverageScore: number,
- *   reasoningScore: number,
- *   communicationScore: number,
- *   reason: string
- * }}
+ * @param {object} [curriculumContext]
+ * @returns {object}
  */
-export function evaluateAnswer(answer = "", question = "", session = {}) {
+export function evaluateAnswer(answer = "", question = "", session = {}, curriculumContext = {}) {
   const cleaned = String(answer || "").trim();
-  const questionText = String(question || "");
+  const questionText = String(question || curriculumContext?.title || "");
   const totalLength = cleaned.length;
-  const coverageScore = estimateTopicCoverage(cleaned, questionText);
+  const coverageScore = estimateTopicCoverage(cleaned, questionText, curriculumContext);
 
   if (!cleaned) {
     return {
@@ -83,10 +124,14 @@ export function evaluateAnswer(answer = "", question = "", session = {}) {
       reasoningScore: 0,
       communicationScore: 20,
       reason: "No answer was provided yet.",
+      source: "heuristic",
     };
   }
 
-  const explicitUncertainty = /\b(i\s+(don\'t|do not|cannot|can't|do not)|not sure|no idea|no clue|unsure|i\s+am\s+not\s+sure|i\s+don\'t\s+remember|i\s+don\s*'?t\s+know)\b/i.test(cleaned);
+  const explicitUncertainty =
+    /\b(i\s+(don\'t|do not|cannot|can't)|not sure|no idea|no clue|unsure|i\s+am\s+not\s+sure|i\s+don\'t\s+remember|i\s+don\s*'?t\s+know)\b/i.test(
+      cleaned
+    );
 
   if (explicitUncertainty) {
     return {
@@ -95,12 +140,21 @@ export function evaluateAnswer(answer = "", question = "", session = {}) {
       coverageScore: 5,
       reasoningScore: 15,
       communicationScore: 30,
-      reason: "The candidate explicitly admitted uncertainty and needs a simpler, more guided question on the same topic.",
+      reason:
+        "The candidate explicitly admitted uncertainty and needs a simpler, more guided question on the same topic.",
+      source: "heuristic",
     };
   }
 
-  const containsEvidence = /(because|therefore|for example|such as|this means|since|if|when|while|however|therefore)/i.test(cleaned);
-  const containsSpecifics = /\b(embedding|retrieval|prompt|llm|agent|vector|context|token|rag|model|api|security|mcp|tools|dataset|pipeline|evaluation)\b/i.test(cleaned);
+  const containsEvidence =
+    /(because|therefore|for example|such as|this means|in practice|trade-?off|since|however|compared to)/i.test(
+      cleaned
+    );
+  const containsSpecifics =
+    /\b(embedding|retrieval|prompt|llm|agent|vector|context|token|rag|model|api|security|mcp|tools|dataset|pipeline|evaluation|latency|chunk|orchestration)\b/i.test(
+      cleaned
+    );
+  const objectiveAligned = coverageScore >= 55;
   const seriousLength = totalLength > 180;
   const moderateLength = totalLength > 60;
 
@@ -109,22 +163,26 @@ export function evaluateAnswer(answer = "", question = "", session = {}) {
   let reasoningScore = 20;
   let communicationScore = 35;
 
-  if (coverageScore >= 80 && seriousLength && containsEvidence) {
+  if (coverageScore >= 75 && seriousLength && containsEvidence && objectiveAligned) {
     classification = "EXCELLENT";
     confidenceScore = 92;
     reasoningScore = 94;
     communicationScore = 88;
-  } else if (coverageScore >= 65 && (moderateLength || containsSpecifics)) {
+  } else if (
+    coverageScore >= 55 &&
+    (moderateLength || containsSpecifics) &&
+    (containsEvidence || objectiveAligned)
+  ) {
     classification = "GOOD";
     confidenceScore = 78;
     reasoningScore = 76;
     communicationScore = 80;
-  } else if (coverageScore >= 45 && (moderateLength || containsSpecifics || containsEvidence)) {
+  } else if (coverageScore >= 35 && (moderateLength || containsSpecifics || containsEvidence)) {
     classification = "PARTIAL";
     confidenceScore = 58;
     reasoningScore = 52;
     communicationScore = 60;
-  } else if (coverageScore >= 25 && totalLength < 120) {
+  } else if (coverageScore >= 20 && totalLength < 120) {
     classification = "WEAK";
     confidenceScore = 35;
     reasoningScore = 28;
@@ -136,12 +194,17 @@ export function evaluateAnswer(answer = "", question = "", session = {}) {
     communicationScore = 30;
   }
 
+  const objectiveHint =
+    Array.isArray(curriculumContext?.objectives) && curriculumContext.objectives.length
+      ? ` Checked against curriculum objectives for ${curriculumContext.title || questionText}.`
+      : "";
+
   const reasonMap = {
-    EXCELLENT: "The answer shows solid understanding and relevant examples.",
-    GOOD: "The answer is mostly correct with some room for deeper reasoning.",
-    PARTIAL: "The answer is directionally correct but too shallow or incomplete.",
-    WEAK: "The answer shows limited understanding of the concept.",
-    INCORRECT: "The answer is not aligned with the topic and needs clarification.",
+    EXCELLENT: `The answer shows solid understanding with relevant reasoning.${objectiveHint}`,
+    GOOD: `The answer is mostly aligned with the topic and objectives, with room for deeper reasoning.${objectiveHint}`,
+    PARTIAL: `The answer is directionally related but incomplete against the expected learning objectives.${objectiveHint}`,
+    WEAK: `The answer shows limited understanding of the concept and objectives.${objectiveHint}`,
+    INCORRECT: `The answer is not aligned with the topic/objectives and needs clarification.${objectiveHint}`,
   };
 
   return {
@@ -151,6 +214,7 @@ export function evaluateAnswer(answer = "", question = "", session = {}) {
     reasoningScore,
     communicationScore,
     reason: reasonMap[classification] || "The answer needs follow-up evaluation.",
+    source: "heuristic",
   };
 }
 
@@ -179,20 +243,13 @@ export function adjustDifficulty(classification = "PARTIAL", currentDifficulty =
  * Determine the next interview action based on evaluation and session state.
  * @param {object} session
  * @param {object} evaluation
- * @returns {{
- *   action: string,
- *   reason: string,
- *   shouldMoveToNextTopic: boolean,
- *   shouldAskFollowUp: boolean,
- *   shouldFinish: boolean
- * }}
+ * @returns {object}
  */
 export function determineNextAction(session = {}, evaluation = {}) {
   const followUpCount = Number(session?.followUpCount ?? 0);
   const topicScore = Number(session?.currentTopicScore ?? 0);
   const classification = evaluation?.classification || "PARTIAL";
 
-  // Cap follow-ups for every classification so the interview cannot stall forever.
   if (followUpCount >= MAX_FOLLOW_UPS) {
     return {
       action: "moveToNextTopic",
@@ -283,57 +340,100 @@ export function determineNextAction(session = {}, evaluation = {}) {
 }
 
 /**
- * Generate a context-aware follow-up question.
+ * Generate a context-aware follow-up question grounded in the candidate's answer.
  * @param {string} classification
  * @param {string} topic
  * @param {string} currentDifficulty
+ * @param {string} [candidateAnswer]
  * @returns {string}
  */
-export function buildFollowUpQuestion(classification = "PARTIAL", topic = "", currentDifficulty = "Intermediate") {
+export function buildFollowUpQuestion(
+  classification = "PARTIAL",
+  topic = "",
+  currentDifficulty = "Intermediate",
+  candidateAnswer = ""
+) {
   const topicText = String(topic || "this topic");
+  const snippet = extractAnswerSnippet(candidateAnswer);
+  const referenced = snippet ? `"${snippet}"` : topicText.toLowerCase();
 
   if (classification === "INCORRECT") {
-    return `Think about how the model gets external knowledge. Try again and explain your reasoning in simpler terms.`;
+    return snippet
+      ? `You said ${referenced}. Let's reset: what is the core problem ${topicText.toLowerCase()} is meant to solve?`
+      : `Let's reset on ${topicText.toLowerCase()}. What core problem is this concept meant to solve?`;
   }
 
   if (classification === "WEAK") {
-    return `Let’s simplify this: what is the core idea behind ${topicText.toLowerCase()}?`;
+    return snippet
+      ? `You mentioned ${referenced}. Can you define the core idea behind ${topicText.toLowerCase()} in simpler terms?`
+      : `Let's simplify this: what is the core idea behind ${topicText.toLowerCase()}?`;
   }
 
   if (classification === "PARTIAL") {
-    return `You mentioned ${topicText.toLowerCase()}. Can you explain the key mechanism or concept behind it in more detail?`;
+    return snippet
+      ? `You said ${referenced}. Can you go one level deeper on the key mechanism and why it matters?`
+      : `You touched on ${topicText.toLowerCase()}. Can you explain the key mechanism in more detail?`;
   }
 
   if (classification === "GOOD") {
-    return `Why does ${topicText.toLowerCase()} matter in a production system, and what tradeoff should an engineer consider?`;
+    return snippet
+      ? `Building on ${referenced}: what tradeoff would you watch for when using this in production?`
+      : `Why does ${topicText.toLowerCase()} matter in a production system, and what tradeoff should an engineer consider?`;
   }
 
   if (classification === "EXCELLENT") {
     if (currentDifficulty === "Advanced" || currentDifficulty === "Expert") {
-      return `How would you design a production-grade version of ${topicText.toLowerCase()} while balancing latency, quality, and cost?`;
+      return snippet
+        ? `Strong point about ${referenced}. How would you harden this design for latency, quality, and cost at production scale?`
+        : `How would you design a production-grade version of ${topicText.toLowerCase()} while balancing latency, quality, and cost?`;
     }
 
-    return `How would you design a stronger real-world implementation of ${topicText.toLowerCase()} in a production environment?`;
+    return snippet
+      ? `You noted ${referenced}. How would you extend that into a stronger real-world implementation?`
+      : `How would you design a stronger real-world implementation of ${topicText.toLowerCase()} in a production environment?`;
   }
 
-  return `Can you explain your understanding of ${topicText.toLowerCase()} in one concise example?`;
+  return snippet
+    ? `You mentioned ${referenced}. Can you explain that with one concrete example?`
+    : `Can you explain your understanding of ${topicText.toLowerCase()} in one concise example?`;
 }
 
 /**
  * Move to the next unasked topic in the interview plan.
  * @param {object} session
+ * @param {object} [currentQuestion]
  * @returns {object | null}
  */
-export function moveToNextTopic(session = {}) {
+export function moveToNextTopic(session = {}, currentQuestion = null) {
   const plan = Array.isArray(session?.plan?.interviewPlan) ? session.plan.interviewPlan : [];
-  const asked = new Set(Array.isArray(session?.askedQuestions) ? session.askedQuestions : []);
+  if (plan.length === 0) {
+    return null;
+  }
 
-  const nextTopic = plan.find((item) => !asked.has(item?.topic));
-  return nextTopic || null;
+  const asked = new Set(Array.isArray(session?.askedQuestions) ? session.askedQuestions : []);
+  const currentTopic = currentQuestion?.topic || session?.currentTopic || "";
+  if (currentTopic) {
+    asked.add(currentTopic);
+  }
+
+  const currentIndex = Number(session?.currentQuestionIndex ?? 0);
+  const fromIndex = Number.isFinite(currentIndex) ? currentIndex + 1 : 0;
+
+  for (let i = fromIndex; i < plan.length; i += 1) {
+    const item = plan[i];
+    if (item?.topic && !asked.has(item.topic)) {
+      return item;
+    }
+    if (item?.topic) {
+      return item;
+    }
+  }
+
+  return null;
 }
 
 /**
- * Add a question to the asked list and compute the next state.
+ * Add a question to the asked list.
  * @param {object} session
  * @param {string} topic
  */
@@ -359,7 +459,12 @@ export function updateSessionMemory(session = {}, evaluation = {}, currentQuesti
   const classification = evaluation?.classification || "PARTIAL";
   const nextDifficulty = adjustDifficulty(classification, session?.currentDifficulty || "Intermediate");
   const overallScore = Number(
-    ((Number(evaluation?.confidenceScore || 0) + Number(evaluation?.coverageScore || 0) + Number(evaluation?.reasoningScore || 0)) / 3).toFixed(2)
+    (
+      (Number(evaluation?.confidenceScore || 0) +
+        Number(evaluation?.coverageScore || 0) +
+        Number(evaluation?.reasoningScore || 0)) /
+      3
+    ).toFixed(2)
   );
 
   const sessionState = {
@@ -368,8 +473,12 @@ export function updateSessionMemory(session = {}, evaluation = {}, currentQuesti
     currentDifficulty: nextDifficulty,
     questionNumber: Number(questionNumber || session?.questionNumber || 1),
     followUpCount: Number(session?.followUpCount || 0),
-    evaluationHistory: Array.isArray(session?.evaluationHistory) ? [...session.evaluationHistory, evaluation] : [evaluation],
-    conversationHistory: Array.isArray(session?.conversationHistory) ? [...session.conversationHistory] : [],
+    evaluationHistory: Array.isArray(session?.evaluationHistory)
+      ? [...session.evaluationHistory, evaluation]
+      : [evaluation],
+    conversationHistory: Array.isArray(session?.conversationHistory)
+      ? [...session.conversationHistory]
+      : [],
     weakTopics: Array.isArray(session?.weakTopics) ? [...session.weakTopics] : [],
     strongTopics: Array.isArray(session?.strongTopics) ? [...session.strongTopics] : [],
     difficulty: nextDifficulty,
@@ -399,25 +508,45 @@ export function updateSessionMemory(session = {}, evaluation = {}, currentQuesti
  * @param {object} session
  * @param {object} currentQuestion
  * @param {string} candidateAnswer
- * @returns {{
- *   evaluation: object,
- *   action: string,
- *   nextQuestion: object | null,
- *   reason: string,
- *   state: object,
- *   finishInterview: boolean
- * }}
+ * @param {object|null} [evaluationOverride]
+ * @param {object} [curriculumContext]
+ * @returns {object}
  */
-export function processAnswer(session = {}, currentQuestion = {}, candidateAnswer = "") {
-  const evaluation = evaluateAnswer(candidateAnswer, currentQuestion?.topic || "", session);
-  const updatedSession = updateSessionMemory(session, evaluation, currentQuestion, session?.questionNumber || 1);
+export function processAnswer(
+  session = {},
+  currentQuestion = {},
+  candidateAnswer = "",
+  evaluationOverride = null,
+  curriculumContext = {}
+) {
+  const evaluation =
+    evaluationOverride ||
+    evaluateAnswer(candidateAnswer, currentQuestion?.topic || "", session, curriculumContext);
+  const updatedSession = updateSessionMemory(
+    session,
+    evaluation,
+    currentQuestion,
+    session?.questionNumber || 1
+  );
   const decision = determineNextAction(updatedSession, evaluation);
 
+  const makeFollowUp = (difficulty = updatedSession.currentDifficulty) =>
+    buildFollowUpQuestion(
+      evaluation.classification,
+      currentQuestion?.topic || "this topic",
+      difficulty,
+      candidateAnswer
+    );
+
   if (decision.action === "moveToNextTopic") {
-    const nextTopic = moveToNextTopic(updatedSession);
+    markQuestionAsked(updatedSession, currentQuestion?.topic);
+    const nextTopic = moveToNextTopic(updatedSession, currentQuestion);
     updatedSession.currentTopic = nextTopic?.topic || updatedSession.currentTopic;
     updatedSession.followUpCount = 0;
-    markQuestionAsked(updatedSession, nextTopic?.topic || currentQuestion?.topic);
+
+    if (nextTopic?.topic) {
+      markQuestionAsked(updatedSession, nextTopic.topic);
+    }
 
     return {
       evaluation,
@@ -425,12 +554,13 @@ export function processAnswer(session = {}, currentQuestion = {}, candidateAnswe
       nextQuestion: nextTopic || null,
       reason: decision.reason,
       state: updatedSession,
-      finishInterview: false,
+      finishInterview: !nextTopic,
     };
   }
 
   if (decision.action === "decreaseDifficulty") {
-    updatedSession.currentDifficulty = "Easy";
+    const nextDifficulty = adjustDifficulty(evaluation.classification, updatedSession.currentDifficulty);
+    updatedSession.currentDifficulty = nextDifficulty;
     updatedSession.followUpCount += 1;
     markQuestionAsked(updatedSession, currentQuestion?.topic);
 
@@ -440,7 +570,8 @@ export function processAnswer(session = {}, currentQuestion = {}, candidateAnswe
       nextQuestion: {
         ...currentQuestion,
         topic: currentQuestion?.topic,
-        difficulty: "Easy",
+        difficulty: nextDifficulty,
+        followUp: makeFollowUp(nextDifficulty),
       },
       reason: decision.reason,
       state: updatedSession,
@@ -449,7 +580,8 @@ export function processAnswer(session = {}, currentQuestion = {}, candidateAnswe
   }
 
   if (decision.action === "increaseDifficulty") {
-    updatedSession.currentDifficulty = "Advanced";
+    const nextDifficulty = adjustDifficulty(evaluation.classification, updatedSession.currentDifficulty);
+    updatedSession.currentDifficulty = nextDifficulty;
     updatedSession.followUpCount += 1;
     markQuestionAsked(updatedSession, currentQuestion?.topic);
 
@@ -459,7 +591,8 @@ export function processAnswer(session = {}, currentQuestion = {}, candidateAnswe
       nextQuestion: {
         ...currentQuestion,
         topic: currentQuestion?.topic,
-        difficulty: "Advanced",
+        difficulty: nextDifficulty,
+        followUp: makeFollowUp(nextDifficulty),
       },
       reason: decision.reason,
       state: updatedSession,
@@ -478,11 +611,7 @@ export function processAnswer(session = {}, currentQuestion = {}, candidateAnswe
         ...currentQuestion,
         topic: currentQuestion?.topic,
         difficulty: updatedSession.currentDifficulty,
-        followUp: buildFollowUpQuestion(
-          evaluation.classification,
-          currentQuestion?.topic || "this topic",
-          updatedSession.currentDifficulty
-        ),
+        followUp: makeFollowUp(),
       },
       reason: decision.reason,
       state: updatedSession,
@@ -493,7 +622,10 @@ export function processAnswer(session = {}, currentQuestion = {}, candidateAnswe
   return {
     evaluation,
     action: "stayOnCurrentTopic",
-    nextQuestion: currentQuestion,
+    nextQuestion: {
+      ...currentQuestion,
+      followUp: makeFollowUp(),
+    },
     reason: decision.reason,
     state: updatedSession,
     finishInterview: false,

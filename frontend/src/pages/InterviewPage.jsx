@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 
-import api from "../services/api.js";
+import api, { getApiErrorMessage } from "../services/api.js";
 import InterviewHeader from "../components/InterviewHeader.jsx";
 import ProgressBar from "../components/ProgressBar.jsx";
 import ChatMessage from "../components/ChatMessage.jsx";
@@ -16,6 +16,12 @@ const createTimestamp = () =>
     hour: "2-digit",
     minute: "2-digit",
   });
+
+let messageIdCounter = 0;
+const createMessageId = () => {
+  messageIdCounter += 1;
+  return `${Date.now()}-${messageIdCounter}`;
+};
 
 /**
  * Derive display progress from backend interviewState (source of truth).
@@ -43,7 +49,14 @@ function syncProgressFromBackend(interviewState = {}, progressFallback = {}) {
 
 function InterviewPage() {
   const navigate = useNavigate();
+  const location = useLocation();
+  const candidateId =
+    location?.state?.candidateId ||
+    new URLSearchParams(location.search).get("candidateId") ||
+    DEFAULT_CANDIDATE_ID;
+
   const [sessionId, setSessionId] = useState("");
+  const [candidateName, setCandidateName] = useState(location?.state?.candidateName || "");
   const [messages, setMessages] = useState([]);
   const [draft, setDraft] = useState("");
   const [isTyping, setIsTyping] = useState(false);
@@ -54,6 +67,7 @@ function InterviewPage() {
   const chatEndRef = useRef(null);
   const chatContainerRef = useRef(null);
   const startedRef = useRef(false);
+  const sendingRef = useRef(false);
 
   const progressLabel = useMemo(() => {
     if (!progress.total) {
@@ -87,7 +101,7 @@ function InterviewPage() {
       setStatus("Starting interview...");
 
       const { data } = await api.post("/api/interview/start", {
-        candidateId: DEFAULT_CANDIDATE_ID,
+        candidateId,
       });
 
       if (!data?.success) {
@@ -95,11 +109,12 @@ function InterviewPage() {
       }
 
       setSessionId(data.sessionId || "");
+      setCandidateName(data.candidateName || candidateName || "");
       applyInterviewState(data, data?.currentQuestion?.topic);
       setStatus("In Progress");
       setMessages([
         {
-          id: Date.now(),
+          id: createMessageId(),
           sender: "ai",
           text:
             data?.message ||
@@ -111,9 +126,9 @@ function InterviewPage() {
       setStatus("Interview unavailable");
       setMessages([
         {
-          id: Date.now(),
+          id: createMessageId(),
           sender: "ai",
-          text: error?.message || "Unable to start the interview right now.",
+          text: getApiErrorMessage(error, "Unable to start the interview right now."),
           timestamp: createTimestamp(),
         },
       ]);
@@ -126,7 +141,9 @@ function InterviewPage() {
     if (startedRef.current) return;
     startedRef.current = true;
     void startInterview();
-  }, []);
+    // Start once per mount for the selected candidate.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [candidateId]);
 
   useEffect(() => {
     const container = chatContainerRef.current;
@@ -142,11 +159,12 @@ function InterviewPage() {
 
   const handleSendMessage = async () => {
     const trimmed = draft.trim();
-    if (!trimmed || !sessionId) return;
+    if (!trimmed || !sessionId || isTyping || sendingRef.current) return;
 
+    sendingRef.current = true;
     const timestamp = createTimestamp();
     const userMessage = {
-      id: Date.now(),
+      id: createMessageId(),
       sender: "user",
       text: trimmed,
       timestamp,
@@ -185,7 +203,7 @@ function InterviewPage() {
           setMessages((prev) => [
             ...prev,
             {
-              id: Date.now() + 1,
+              id: createMessageId(),
               sender: "ai",
               text: data.message,
               timestamp: createTimestamp(),
@@ -207,7 +225,7 @@ function InterviewPage() {
       setMessages((prev) => [
         ...prev,
         {
-          id: Date.now() + 1,
+          id: createMessageId(),
           sender: "ai",
           text: aiMessage,
           timestamp: createTimestamp(),
@@ -215,18 +233,23 @@ function InterviewPage() {
       ]);
       setStatus("In Progress");
     } catch (error) {
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: Date.now() + 2,
-          sender: "ai",
-          text: error?.message || "Sorry, something went wrong.",
-          timestamp: createTimestamp(),
-        },
-      ]);
-      setStatus("Interview unavailable");
+      setDraft(trimmed);
+      setMessages((prev) => {
+        const withoutOptimisticUser = prev.filter((entry) => entry.id !== userMessage.id);
+        return [
+          ...withoutOptimisticUser,
+          {
+            id: createMessageId(),
+            sender: "ai",
+            text: getApiErrorMessage(error, "Sorry, something went wrong. Please try again."),
+            timestamp: createTimestamp(),
+          },
+        ];
+      });
+      setStatus("In Progress");
     } finally {
       setIsTyping(false);
+      sendingRef.current = false;
     }
   };
 
@@ -287,15 +310,17 @@ function InterviewPage() {
                     onChange={(event) => setDraft(event.target.value)}
                     onKeyDown={handleKeyDown}
                     rows={1}
+                    disabled={isTyping || !sessionId}
                     placeholder="Type your answer..."
-                    className="max-h-32 min-h-[52px] flex-1 resize-none border-0 bg-transparent px-2 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none"
+                    className="max-h-32 min-h-[52px] flex-1 resize-none border-0 bg-transparent px-2 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
                   />
 
                   <motion.button
-                    whileHover={{ scale: 1.02 }}
-                    whileTap={{ scale: 0.98 }}
+                    whileHover={isTyping || !sessionId || !draft.trim() ? undefined : { scale: 1.02 }}
+                    whileTap={isTyping || !sessionId || !draft.trim() ? undefined : { scale: 0.98 }}
                     onClick={() => void handleSendMessage()}
-                    className="rounded-xl bg-gradient-to-r from-cyan-400 to-blue-500 px-4 py-3 text-sm font-semibold text-slate-950 shadow-lg shadow-cyan-500/20 transition hover:brightness-110"
+                    disabled={isTyping || !sessionId || !draft.trim()}
+                    className="rounded-xl bg-gradient-to-r from-cyan-400 to-blue-500 px-4 py-3 text-sm font-semibold text-slate-950 shadow-lg shadow-cyan-500/20 transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     Send
                   </motion.button>
@@ -308,6 +333,7 @@ function InterviewPage() {
             topic={topic}
             status={status}
             questionsRemaining={questionsRemaining}
+            candidateName={candidateName}
           />
         </div>
       </div>

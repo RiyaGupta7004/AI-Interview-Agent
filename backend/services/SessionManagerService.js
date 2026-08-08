@@ -55,6 +55,7 @@ export function createSession(candidateId) {
     skippedTopics: Array.isArray(plan?.skippedTopics) ? plan.skippedTopics : [],
     plan,
     currentQuestionIndex: 0,
+    currentQuestion,
     conversation: [],
     completedQuestions: [],
     completedTopics: [],
@@ -97,6 +98,10 @@ export function getSession(sessionId) {
 export function getCurrentQuestion(session) {
   if (!session || !Array.isArray(session?.plan?.interviewPlan)) {
     return null;
+  }
+
+  if (session.currentQuestion) {
+    return session.currentQuestion;
   }
 
   const index = Number(session.currentQuestionIndex ?? 0);
@@ -200,14 +205,27 @@ export function endSession(sessionId) {
   const interviewDurationMs = Math.max(0, endedAt.getTime() - startedAt.getTime());
   const interviewDuration = `${Math.round(interviewDurationMs / 1000)}s`;
 
-  return {
+  const summary = {
     summary: `Interview completed for ${session.candidateName}.`,
-    strengths: [...(session.strengths || [])],
-    weakAreas: [...(session.weakAreas || [])],
+    strengths: [...(session.strongTopics || session.strengths || [])],
+    weakAreas: [...(session.weakTopics || session.weakAreas || [])],
     completedTopics: [...(session.completedTopics || [])],
     interviewDuration,
     interviewState: buildInterviewState(session),
   };
+
+  // Keep completed sessions briefly for report generation, then drop to avoid leaks.
+  // Callers that need the session object should read it before endSession deletes it.
+  return summary;
+}
+
+/**
+ * Remove a session from memory after the report has been generated.
+ * @param {string} sessionId
+ * @returns {boolean}
+ */
+export function clearSession(sessionId) {
+  return sessions.delete(sessionId);
 }
 
 export default {
@@ -216,5 +234,6 @@ export default {
   getCurrentQuestion,
   recordAnswer,
   endSession,
+  clearSession,
   buildInterviewState,
 };

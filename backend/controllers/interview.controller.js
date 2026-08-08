@@ -3,12 +3,20 @@ import {
   getSession,
   recordAnswer,
   endSession,
+  clearSession,
   buildInterviewState,
 } from "../services/SessionManagerService.js";
 import { buildPrompt } from "../services/PromptBuilderService.js";
-import { generateResponse } from "../services/openai.service.js";
-import { processAnswer } from "../services/AdaptiveInterviewEngine.js";
+import { generateResponse, evaluateAnswerWithLLM } from "../services/openai.service.js";
+import {
+  processAnswer,
+  evaluateAnswer,
+} from "../services/AdaptiveInterviewEngine.js";
 import { generateInterviewReport } from "../services/ReportGeneratorService.js";
+import {
+  getCurriculumContextForTopic,
+  listCandidates,
+} from "../services/InterviewPlannerService.js";
 
 /**
  * Merge adaptive-engine state fields onto the live in-memory session.
@@ -40,6 +48,108 @@ function applyEngineState(session, engineState = {}) {
 }
 
 /**
+ * Persist evaluation artifacts for the current topic onto the session.
+ * @param {object} session
+ * @param {object} currentQuestion
+ * @param {object} decisionResult
+ * @param {object} decision
+ */
+function recordTopicEvaluation(session, currentQuestion, decisionResult, decision) {
+  const currentTopic = currentQuestion?.topic || session?.currentTopic;
+  if (!currentTopic) return;
+
+  const avgScore = Number(
+    ((Number(decisionResult.evaluation?.confidenceScore || 0) +
+      Number(decisionResult.evaluation?.coverageScore || 0) +
+      Number(decisionResult.evaluation?.reasoningScore || 0)) /
+      3).toFixed(2)
+  );
+
+  session.topicScores = {
+    ...(session.topicScores || {}),
+    [currentTopic]: avgScore,
+  };
+
+  session.evaluationHistory = Array.isArray(session.evaluationHistory)
+    ? [...session.evaluationHistory, decisionResult.evaluation]
+    : [decisionResult.evaluation];
+
+  session.followUpHistory = Array.isArray(session.followUpHistory)
+    ? [
+        ...session.followUpHistory,
+        {
+          topic: currentTopic,
+          action: decisionResult.action,
+          difficulty: decision.difficulty,
+          reason: decisionResult.reason,
+        },
+      ]
+    : [
+        {
+          topic: currentTopic,
+          action: decisionResult.action,
+          difficulty: decision.difficulty,
+          reason: decisionResult.reason,
+        },
+      ];
+
+  session.currentDifficulty = decision.difficulty;
+  session.currentTopicScore = avgScore;
+}
+
+/**
+ * Resolve evaluation with LLM first, curriculum-aware heuristic fallback second.
+ * @param {string} answer
+ * @param {object} currentQuestion
+ * @param {object} session
+ * @param {object} curriculumContext
+ * @returns {Promise<object>}
+ */
+async function resolveEvaluation(answer, currentQuestion, session, curriculumContext) {
+  const heuristic = evaluateAnswer(
+    answer,
+    currentQuestion?.topic || "",
+    session,
+    curriculumContext
+  );
+
+  try {
+    const llmEvaluation = await evaluateAnswerWithLLM({
+      answer,
+      topic: currentQuestion?.topic || curriculumContext?.title || "",
+      objectives: curriculumContext?.objectives || [],
+      tools: curriculumContext?.tools || [],
+      difficulty: currentQuestion?.difficulty || session?.currentDifficulty || "Intermediate",
+    });
+    return llmEvaluation;
+  } catch (error) {
+    console.warn("LLM evaluation unavailable, using curriculum heuristic:", error?.message || error);
+    return heuristic;
+  }
+}
+
+/**
+ * List candidates available for interview selection.
+ * @param {import('express').Request} req
+ * @param {import('express').Response} res
+ */
+export const getCandidates = (req, res) => {
+  try {
+    const candidates = listCandidates();
+    return res.status(200).json({
+      success: true,
+      candidates,
+      count: candidates.length,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: error.message || "Unable to load candidates.",
+    });
+  }
+};
+
+/**
  * Start an interview session for the requested candidate.
  * @param {import('express').Request} req
  * @param {import('express').Response} res
@@ -57,6 +167,10 @@ export const startInterview = async (req, res) => {
 
     const { session, currentQuestion } = createSession(candidateId);
     const interviewState = buildInterviewState(session);
+    const curriculumContext = getCurriculumContextForTopic(
+      currentQuestion?.topic,
+      currentQuestion?.day
+    );
 
     const prompt = buildPrompt(
       session.plan,
@@ -64,6 +178,8 @@ export const startInterview = async (req, res) => {
         ...(currentQuestion || {}),
         topic: currentQuestion?.topic,
         difficulty: currentQuestion?.difficulty || "Intermediate",
+        objectives: curriculumContext.objectives,
+        tools: curriculumContext.tools,
       },
       [],
       {
@@ -76,6 +192,7 @@ export const startInterview = async (req, res) => {
         stayOnTopic: true,
         difficulty: currentQuestion?.difficulty || "Intermediate",
         reason: "Opening the interview with a warm greeting and introduction question.",
+        objectives: curriculumContext.objectives,
       }
     );
 
@@ -93,6 +210,7 @@ export const startInterview = async (req, res) => {
     return res.status(200).json({
       success: true,
       sessionId: session.sessionId,
+      candidateId: session.candidateId,
       candidateName: session.candidateName,
       role: session.role,
       message: aiMessage,
@@ -110,9 +228,11 @@ export const startInterview = async (req, res) => {
       model: response?.model || process.env.OPENAI_MODEL || "unknown",
     });
   } catch (error) {
-    return res.status(400).json({
+    const status = /OPENAI_/.test(error?.message || "") ? 503 : 400;
+    return res.status(status).json({
       success: false,
       message: error.message || "Unable to start interview.",
+      error: true,
     });
   }
 };
@@ -124,12 +244,25 @@ export const startInterview = async (req, res) => {
  */
 export const sendMessage = async (req, res) => {
   try {
-    const { sessionId, message } = req.body || {};
+    const { sessionId, message, candidateAnswer } = req.body || {};
 
     if (!sessionId) {
       return res.status(400).json({
         success: false,
         message: "sessionId is required.",
+        error: true,
+      });
+    }
+
+    const trimmedMessage =
+      typeof (message ?? candidateAnswer) === "string"
+        ? String(message ?? candidateAnswer).trim()
+        : "";
+    if (!trimmedMessage) {
+      return res.status(400).json({
+        success: false,
+        message: "Candidate message is required.",
+        error: true,
       });
     }
 
@@ -139,106 +272,133 @@ export const sendMessage = async (req, res) => {
       return res.status(404).json({
         success: false,
         message: "Interview session not found.",
+        error: true,
+      });
+    }
+
+    if (session.completed) {
+      return res.status(409).json({
+        success: false,
+        message: "This interview session has already ended.",
+        error: true,
       });
     }
 
     const currentQuestion =
       session?.plan?.interviewPlan?.[session.currentQuestionIndex] || null;
-    const decisionResult = processAnswer(session, currentQuestion, message || "");
-    applyEngineState(session, decisionResult.state);
+    const curriculumContext = getCurriculumContextForTopic(
+      currentQuestion?.topic,
+      currentQuestion?.day
+    );
+
+    const evaluation = await resolveEvaluation(
+      trimmedMessage,
+      currentQuestion,
+      session,
+      curriculumContext
+    );
+
+    const decisionResult = processAnswer(
+      session,
+      currentQuestion,
+      trimmedMessage,
+      evaluation,
+      curriculumContext
+    );
 
     const decision = {
       evaluation: decisionResult.evaluation,
       action: decisionResult.action,
       reason: decisionResult.reason,
-      difficulty: decisionResult.state?.currentDifficulty || currentQuestion?.difficulty || "Intermediate",
+      difficulty:
+        decisionResult.state?.currentDifficulty || currentQuestion?.difficulty || "Intermediate",
       nextQuestion: decisionResult.nextQuestion,
       finishInterview: Boolean(decisionResult.finishInterview),
       stayOnTopic: decisionResult.action !== "moveToNextTopic",
       nextTopicAllowed: decisionResult.action === "moveToNextTopic",
+      objectives: curriculumContext.objectives,
     };
 
-    const currentTopic = currentQuestion?.topic || session?.currentTopic;
-    if (currentTopic) {
-      const avgScore = Number(
-        ((Number(decisionResult.evaluation?.confidenceScore || 0) +
-          Number(decisionResult.evaluation?.coverageScore || 0) +
-          Number(decisionResult.evaluation?.reasoningScore || 0)) /
-          3).toFixed(2)
-      );
+    const rollbackSnapshot = {
+      followUpCount: session.followUpCount,
+      askedQuestions: [...(session.askedQuestions || [])],
+      currentDifficulty: session.currentDifficulty,
+      currentTopicScore: session.currentTopicScore,
+      weakTopics: [...(session.weakTopics || [])],
+      strongTopics: [...(session.strongTopics || [])],
+      currentTopic: session.currentTopic,
+      topicScores: { ...(session.topicScores || {}) },
+      evaluationHistory: [...(session.evaluationHistory || [])],
+      followUpHistory: [...(session.followUpHistory || [])],
+      conversationLength: session.conversation.length,
+      currentQuestionIndex: session.currentQuestionIndex,
+      completedQuestions: [...(session.completedQuestions || [])],
+      completedTopics: [...(session.completedTopics || [])],
+      completed: session.completed,
+      endedAt: session.endedAt,
+      currentQuestion: session.currentQuestion,
+    };
 
-      session.topicScores = {
-        ...(session.topicScores || {}),
-        [currentTopic]: avgScore,
-      };
+    applyEngineState(session, decisionResult.state);
+    recordTopicEvaluation(session, currentQuestion, decisionResult, decision);
 
-      session.evaluationHistory = Array.isArray(session.evaluationHistory)
-        ? [...session.evaluationHistory, decisionResult.evaluation]
-        : [decisionResult.evaluation];
+    const shouldFinish =
+      Boolean(decision.finishInterview) ||
+      (decisionResult.nextQuestion === null && decision.action === "moveToNextTopic");
 
-      session.followUpHistory = Array.isArray(session.followUpHistory)
-        ? [
-            ...session.followUpHistory,
-            {
-              topic: currentTopic,
-              action: decisionResult.action,
-              difficulty: decision.difficulty,
-              reason: decisionResult.reason,
-            },
-          ]
-        : [
-            {
-              topic: currentTopic,
-              action: decisionResult.action,
-              difficulty: decision.difficulty,
-              reason: decisionResult.reason,
-            },
-          ];
-
-      session.currentDifficulty = decision.difficulty;
-      session.currentTopicScore = avgScore;
-    }
-
-    const { nextQuestion, interviewState } = recordAnswer(sessionId, message || "", decision);
-
-    // Keep live session follow-up count in sync after recordAnswer resets on topic move.
-    if (decision.action === "moveToNextTopic") {
-      session.followUpCount = 0;
-    }
-
-    if (!nextQuestion || interviewState?.completed || decision.finishInterview) {
+    if (shouldFinish) {
+      recordAnswer(sessionId, trimmedMessage, decision);
       const summary = endSession(sessionId);
       const report = generateInterviewReport(session);
+      const interviewState = buildInterviewState(session);
+      clearSession(sessionId);
+
       return res.status(200).json({
         success: true,
         message: "Thank you. The interview is complete.",
         summary,
         report,
-        interviewState: buildInterviewState(session),
+        interviewState,
         nextQuestion: null,
         error: false,
       });
     }
 
-    const finalNextQuestion = {
-      ...(nextQuestion || currentQuestion || {}),
+    const nextCurriculumContext = getCurriculumContextForTopic(
+      decisionResult.nextQuestion?.topic || currentQuestion?.topic,
+      decisionResult.nextQuestion?.day || currentQuestion?.day
+    );
+
+    const previewNextQuestion = {
+      ...(decisionResult.nextQuestion || currentQuestion || {}),
       decision,
       evaluation: decisionResult.evaluation,
       reason: decisionResult.reason,
       previousQuestion: currentQuestion?.topic || "N/A",
-      candidateAnswer: message || "",
-      followUp: decisionResult.nextQuestion?.followUp || nextQuestion?.followUp || "",
+      candidateAnswer: trimmedMessage,
+      followUp: decisionResult.nextQuestion?.followUp || "",
       suggestedQuestion:
         decisionResult.nextQuestion?.followUp ||
-        nextQuestion?.followUp ||
-        nextQuestion?.topic ||
+        decisionResult.nextQuestion?.topic ||
+        currentQuestion?.topic ||
         "",
+      objectives: nextCurriculumContext.objectives,
+      tools: nextCurriculumContext.tools,
     };
+
+    const conversationForPrompt = [
+      ...session.conversation,
+      {
+        role: "user",
+        content: trimmedMessage,
+        timestamp: new Date().toISOString(),
+      },
+    ];
 
     const prompt = buildPrompt(
       session.plan,
-      finalNextQuestion,
-      session.conversation,
+      previewNextQuestion,
+      conversationForPrompt,
       {
         name: session.candidateName,
         role: session.role,
@@ -247,14 +407,84 @@ export const sendMessage = async (req, res) => {
       decision
     );
 
-    const response = await generateResponse(prompt);
-    const aiMessage = response?.message || "Could you tell me a bit more about that?";
+    let response;
+    try {
+      response = await generateResponse(prompt);
+    } catch (llmError) {
+      Object.assign(session, {
+        followUpCount: rollbackSnapshot.followUpCount,
+        askedQuestions: rollbackSnapshot.askedQuestions,
+        currentDifficulty: rollbackSnapshot.currentDifficulty,
+        currentTopicScore: rollbackSnapshot.currentTopicScore,
+        weakTopics: rollbackSnapshot.weakTopics,
+        strongTopics: rollbackSnapshot.strongTopics,
+        currentTopic: rollbackSnapshot.currentTopic,
+        topicScores: rollbackSnapshot.topicScores,
+        evaluationHistory: rollbackSnapshot.evaluationHistory,
+        followUpHistory: rollbackSnapshot.followUpHistory,
+        currentQuestionIndex: rollbackSnapshot.currentQuestionIndex,
+        completedQuestions: rollbackSnapshot.completedQuestions,
+        completedTopics: rollbackSnapshot.completedTopics,
+        completed: rollbackSnapshot.completed,
+        endedAt: rollbackSnapshot.endedAt,
+        currentQuestion: rollbackSnapshot.currentQuestion,
+      });
+      session.conversation.length = rollbackSnapshot.conversationLength;
 
+      return res.status(502).json({
+        success: false,
+        message:
+          llmError?.message ||
+          "Sorry, I'm having trouble generating the next interview question. Please try again.",
+        error: true,
+      });
+    }
+
+    const { nextQuestion, interviewState } = recordAnswer(sessionId, trimmedMessage, decision);
+
+    if (decision.action === "moveToNextTopic") {
+      session.followUpCount = 0;
+    }
+
+    if (!nextQuestion || interviewState?.completed) {
+      const summary = endSession(sessionId);
+      const report = generateInterviewReport(session);
+      clearSession(sessionId);
+
+      return res.status(200).json({
+        success: true,
+        message: "Thank you. The interview is complete.",
+        summary,
+        report,
+        interviewState: buildInterviewState({ ...session, completed: true }),
+        nextQuestion: null,
+        error: false,
+      });
+    }
+
+    const aiMessage = response.message;
     session.conversation.push({
       role: "assistant",
       content: aiMessage,
       timestamp: new Date().toISOString(),
     });
+
+    const finalNextQuestion = {
+      ...(nextQuestion || currentQuestion || {}),
+      decision,
+      evaluation: decisionResult.evaluation,
+      reason: decisionResult.reason,
+      previousQuestion: currentQuestion?.topic || "N/A",
+      candidateAnswer: trimmedMessage,
+      followUp: decisionResult.nextQuestion?.followUp || nextQuestion?.followUp || "",
+      suggestedQuestion:
+        decisionResult.nextQuestion?.followUp ||
+        nextQuestion?.followUp ||
+        nextQuestion?.topic ||
+        "",
+      objectives: nextCurriculumContext.objectives,
+      tools: nextCurriculumContext.tools,
+    };
 
     return res.status(200).json({
       success: true,
@@ -272,9 +502,11 @@ export const sendMessage = async (req, res) => {
       error: false,
     });
   } catch (error) {
-    return res.status(200).json({
+    return res.status(500).json({
       success: false,
-      message: "Sorry, I'm having trouble generating the next interview question. Please try again.",
+      message:
+        error?.message ||
+        "Sorry, I'm having trouble generating the next interview question. Please try again.",
       error: true,
     });
   }
@@ -307,12 +539,14 @@ export const endInterview = (req, res) => {
 
     const summary = endSession(sessionId);
     const report = generateInterviewReport(session);
+    const interviewState = buildInterviewState(session);
+    clearSession(sessionId);
 
     return res.status(200).json({
       success: true,
       ...summary,
       report,
-      interviewState: buildInterviewState(session),
+      interviewState,
     });
   } catch (error) {
     return res.status(400).json({

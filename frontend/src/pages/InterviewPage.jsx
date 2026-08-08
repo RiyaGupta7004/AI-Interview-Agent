@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { useNavigate } from "react-router-dom";
 
@@ -17,6 +17,30 @@ const createTimestamp = () =>
     minute: "2-digit",
   });
 
+/**
+ * Derive display progress from backend interviewState (source of truth).
+ * @param {object} interviewState
+ * @param {object} [progressFallback]
+ * @returns {{ current: number, total: number, remaining: number, completed: boolean }}
+ */
+function syncProgressFromBackend(interviewState = {}, progressFallback = {}) {
+  const totalQuestions = Number(
+    interviewState?.totalQuestions ?? progressFallback?.total ?? 0
+  );
+  const index = Number(interviewState?.currentQuestionIndex);
+
+  const current = Number.isFinite(index)
+    ? Math.max(1, index + 1)
+    : Math.max(1, Number(progressFallback?.current || 1));
+
+  return {
+    current,
+    total: totalQuestions,
+    remaining: Math.max(totalQuestions - current, 0),
+    completed: Boolean(interviewState?.completed),
+  };
+}
+
 function InterviewPage() {
   const navigate = useNavigate();
   const [sessionId, setSessionId] = useState("");
@@ -26,16 +50,36 @@ function InterviewPage() {
   const [status, setStatus] = useState("Starting interview...");
   const [topic, setTopic] = useState("Loading...");
   const [progress, setProgress] = useState({ current: 1, total: 1 });
-  const [currentQuestionNumber, setCurrentQuestionNumber] = useState(1);
   const [questionsRemaining, setQuestionsRemaining] = useState(0);
+  const chatEndRef = useRef(null);
+  const chatContainerRef = useRef(null);
+  const startedRef = useRef(false);
 
   const progressLabel = useMemo(() => {
     if (!progress.total) {
       return "Preparing interview...";
     }
 
-    return `Question ${Math.max(currentQuestionNumber, progress.current || 1)} of ${progress.total}`;
-  }, [currentQuestionNumber, progress]);
+    return `Question ${Math.max(1, Number(progress.current || 1))} of ${progress.total}`;
+  }, [progress]);
+
+  const applyInterviewState = (data, fallbackTopic) => {
+    const synced = syncProgressFromBackend(data?.interviewState, data?.progress);
+    const nextTopic =
+      data?.nextQuestion?.topic ||
+      data?.currentQuestion?.topic ||
+      fallbackTopic ||
+      topic;
+
+    setTopic(nextTopic || "Interview Topic");
+    setProgress({
+      current: synced.current,
+      total: synced.total,
+    });
+    setQuestionsRemaining(synced.remaining);
+
+    return synced;
+  };
 
   const startInterview = async () => {
     try {
@@ -50,24 +94,16 @@ function InterviewPage() {
         throw new Error(data?.message || "Unable to start interview.");
       }
 
-      const firstQuestion = data?.currentQuestion;
-      const totalQuestions = Number(data?.progress?.total || 0);
-      const currentProgress = Number(data?.progress?.current || 1);
-
       setSessionId(data.sessionId || "");
-      setTopic(firstQuestion?.topic || "Interview Topic");
-      setProgress({
-        current: currentProgress,
-        total: totalQuestions,
-      });
-      setCurrentQuestionNumber(currentProgress);
-      setQuestionsRemaining(Math.max(totalQuestions - currentProgress, 0));
+      applyInterviewState(data, data?.currentQuestion?.topic);
       setStatus("In Progress");
       setMessages([
         {
           id: Date.now(),
           sender: "ai",
-          text: firstQuestion?.topic || "Tell me about your experience.",
+          text:
+            data?.message ||
+            "Welcome to your AI interview. Could you briefly introduce yourself?",
           timestamp: createTimestamp(),
         },
       ]);
@@ -87,8 +123,22 @@ function InterviewPage() {
   };
 
   useEffect(() => {
+    if (startedRef.current) return;
+    startedRef.current = true;
     void startInterview();
   }, []);
+
+  useEffect(() => {
+    const container = chatContainerRef.current;
+    if (!container) return;
+
+    const frame = requestAnimationFrame(() => {
+      container.scrollTop = container.scrollHeight;
+      chatEndRef.current?.scrollIntoView({ block: "end" });
+    });
+
+    return () => cancelAnimationFrame(frame);
+  }, [messages, isTyping]);
 
   const handleSendMessage = async () => {
     const trimmed = draft.trim();
@@ -117,33 +167,32 @@ function InterviewPage() {
         throw new Error(data?.message || "Unable to continue the interview.");
       }
 
-      const nextQuestion = data?.nextQuestion;
-      const aiMessage = data?.message || "Could you tell me a bit more about that?";
-      const interviewState = data?.interviewState || {};
-      const totalQuestions = Number(interviewState?.totalQuestions || progress.total || 0);
-      const nextNumber = Math.max(1, Number(interviewState?.currentQuestionIndex ?? 0) + 1);
+      const synced = applyInterviewState(data);
+      const isComplete =
+        !data?.nextQuestion ||
+        Boolean(data?.interviewState?.completed) ||
+        Boolean(data?.report);
 
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: Date.now() + 1,
-          sender: "ai",
-          text: aiMessage,
-          timestamp: createTimestamp(),
-        },
-      ]);
-
-      if (nextQuestion && nextQuestion.topic) {
-        setTopic(nextQuestion.topic);
-        setProgress({ current: nextNumber, total: totalQuestions });
-        setCurrentQuestionNumber(nextNumber);
-        setQuestionsRemaining(Math.max(totalQuestions - nextNumber, 0));
-        setStatus("In Progress");
-      } else {
+      if (isComplete) {
         setStatus("Completed");
-        setProgress({ current: totalQuestions, total: totalQuestions });
-        setCurrentQuestionNumber(totalQuestions || 1);
+        setProgress({
+          current: synced.total || progress.total,
+          total: synced.total || progress.total,
+        });
         setQuestionsRemaining(0);
+
+        if (data?.message) {
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: Date.now() + 1,
+              sender: "ai",
+              text: data.message,
+              timestamp: createTimestamp(),
+            },
+          ]);
+        }
+
         navigate("/results", {
           replace: true,
           state: {
@@ -153,6 +202,18 @@ function InterviewPage() {
         });
         return;
       }
+
+      const aiMessage = data?.message || "Could you tell me a bit more about that?";
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: Date.now() + 1,
+          sender: "ai",
+          text: aiMessage,
+          timestamp: createTimestamp(),
+        },
+      ]);
+      setStatus("In Progress");
     } catch (error) {
       setMessages((prev) => [
         ...prev,
@@ -183,7 +244,7 @@ function InterviewPage() {
 
         <div className="mb-6">
           <ProgressBar
-            currentQuestion={Math.max(currentQuestionNumber, progress.current || 1)}
+            currentQuestion={Math.max(1, Number(progress.current || 1))}
             totalQuestions={Math.max(progress.total || 1, 1)}
           />
         </div>
@@ -202,7 +263,10 @@ function InterviewPage() {
                 </div>
               </div>
 
-              <div className="flex-1 space-y-5 overflow-y-auto bg-[radial-gradient(circle_at_top,_rgba(34,211,238,0.12),_transparent_30%),linear-gradient(180deg,_rgba(15,23,42,0.8),_rgba(2,6,23,1))] px-4 py-5 sm:px-6">
+              <div
+                ref={chatContainerRef}
+                className="flex-1 space-y-5 overflow-y-auto bg-[radial-gradient(circle_at_top,_rgba(34,211,238,0.12),_transparent_30%),linear-gradient(180deg,_rgba(15,23,42,0.8),_rgba(2,6,23,1))] px-4 py-5 sm:px-6"
+              >
                 {messages.map((message) => (
                   <ChatMessage
                     key={message.id}
@@ -213,6 +277,7 @@ function InterviewPage() {
                 ))}
 
                 {isTyping ? <TypingIndicator /> : null}
+                <div ref={chatEndRef} />
               </div>
 
               <div className="border-t border-slate-800 bg-slate-950/60 p-4 sm:p-5">

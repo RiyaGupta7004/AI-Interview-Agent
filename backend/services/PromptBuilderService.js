@@ -14,6 +14,20 @@ function normalizeText(value) {
   return typeof value === "string" ? value.trim() : "";
 }
 
+function getTimeAwareGreeting() {
+  const hour = new Date().getHours();
+
+  if (hour < 12) {
+    return "Good morning! 👋";
+  }
+
+  if (hour < 18) {
+    return "Good afternoon! 👋";
+  }
+
+  return "Good evening! 👋";
+}
+
 /**
  * Build a compact summary of the most recent prior answers.
  * @param {Array<object>} previousConversation
@@ -52,6 +66,7 @@ function buildSystemPrompt(candidateProfile = {}) {
     "Ask ONE question at a time.",
     "Never reveal the answer or provide the solution directly.",
     "Never skip ahead in the interview flow.",
+    "Never speak raw curriculum titles as if they were the interview question.",
     "Use the interview plan as the guide for topic coverage.",
     "If the candidate has already answered previous questions, ask follow-up questions based on those responses.",
     "Adapt your difficulty to the candidate profile: candidate name is " + name + ", role is " + role + ", years of experience is " + experienceText + ".",
@@ -76,6 +91,12 @@ function buildDeveloperPrompt(interviewPlan = {}, currentQuestion = {}, decision
   const currentTopic = normalizeText(currentQuestion?.topic || currentQuestion?.question || "the current topic");
   const difficulty = normalizeText(currentQuestion?.difficulty || currentQuestion?.currentDifficulty || "Intermediate");
   const evaluation = currentQuestion?.evaluation || decision?.evaluation || {};
+  const suggestedQuestion = normalizeText(
+    currentQuestion?.suggestedQuestion ||
+      currentQuestion?.followUp ||
+      currentQuestion?.question ||
+      ""
+  );
   const planSummary = safePlan.length
     ? safePlan
         .slice(0, 8)
@@ -105,15 +126,22 @@ function buildDeveloperPrompt(interviewPlan = {}, currentQuestion = {}, decision
     "Follow the interview plan strictly.",
     "You MUST follow the Decision object exactly.",
     "You MUST NOT invent interview flow.",
-    "You MUST NOT change topic.",
+    "You MUST NOT change topic unless the Decision says moveToNextTopic.",
     "You MUST NOT skip ahead.",
     "Generate ONLY one interviewer message.",
+    "Never use raw curriculum titles as the spoken question.",
+    "Ask a natural interview question about the current topic.",
+    suggestedQuestion
+      ? `Suggested question intent to paraphrase naturally: ${suggestedQuestion}`
+      : "Craft one clear spoken question for the current topic.",
     `The current question is #${currentOrder}: ${currentTopic}.`,
     `Current difficulty: ${difficulty}.`,
     `Decision object: ${decisionText}`,
     `Interview plan topics: ${planSummary}`,
     `Evaluation context: ${evaluationText}.`,
-    "Ask only the current question unless the candidate's previous answer requires a very brief follow-up.",
+    "If the action is askFollowUp or decreaseDifficulty, ask a simpler clarifying question on the same topic.",
+    "If the action is increaseDifficulty, ask a deeper or harder question on the same topic.",
+    "If the action is moveToNextTopic, briefly acknowledge and ask the first natural question on the new topic.",
     "The engine decides move, follow-up, and difficulty. You only generate the natural-language interviewer message.",
     "Keep the flow coherent, professional, and concise.",
     "Do not provide the answer, hints, or a full rubric.",
@@ -141,6 +169,11 @@ function buildUserPrompt(interviewPlan = {}, currentQuestion = {}, previousConve
   const evaluation = currentQuestion?.evaluation || decision?.evaluation || {};
   const conversationSummary = buildConversationSummary(previousConversation);
   const candidateAnswer = normalizeText(currentQuestion?.candidateAnswer || "No previous candidate answer provided.");
+  const suggestedQuestion = normalizeText(
+    currentQuestion?.suggestedQuestion ||
+      currentQuestion?.followUp ||
+      ""
+  );
   const decisionSummary = JSON.stringify({
     evaluation: evaluation.classification || "UNKNOWN",
     action: decision.action || "FOLLOW_UP",
@@ -149,6 +182,25 @@ function buildUserPrompt(interviewPlan = {}, currentQuestion = {}, previousConve
     reason: decision.reason || reasonForNextQuestion,
     nextTopicAllowed: Boolean(decision.nextTopicAllowed) || false,
   }, null, 2);
+
+  if (!Array.isArray(previousConversation) || previousConversation.length === 0) {
+    return [
+      `${getTimeAwareGreeting()}`,
+      "Welcome to your AI Interview.",
+      "I'll ask you technical questions and adapt based on your answers.",
+      "Let's begin with a quick introduction.",
+      "First question: Could you briefly introduce yourself and tell me about your background, experience, or interest in AI and software development?",
+      `Candidate profile: ${candidateName}, ${role}, ${experience}.`,
+      `Interview plan context (internal only, do not read aloud as question titles): ${Array.isArray(interviewPlan?.interviewPlan) ? interviewPlan.interviewPlan.map((entry) => entry?.topic || entry?.moduleName || "Topic").join(", ") : "N/A"}`,
+      "Interview rules:",
+      "- Keep the greeting warm and natural.",
+      "- Ask only the first introduction question.",
+      "- Do not begin with technical questions.",
+      "- Do not expose raw curriculum titles as the spoken question.",
+      "- Stay professional and encouraging.",
+      "- Keep the response under 120 words."
+    ].join("\n");
+  }
 
   return [
     `Candidate profile: ${candidateName}, ${role}, ${experience}.`,
@@ -159,15 +211,17 @@ function buildUserPrompt(interviewPlan = {}, currentQuestion = {}, previousConve
     `Candidate answer: ${candidateAnswer}.`,
     `Evaluation: classification=${evaluation.classification || "UNKNOWN"}, confidence=${evaluation.confidenceScore ?? "n/a"}, coverage=${evaluation.coverageScore ?? "n/a"}, reasoning=${evaluation.reasoningScore ?? "n/a"}, communication=${evaluation.communicationScore ?? "n/a"}.`,
     `Reason for next question: ${reasonForNextQuestion}.`,
+    `Suggested question intent: ${suggestedQuestion || "Ask one natural question for the current topic and Decision action."}.`,
     `Decision object: ${decisionSummary}`,
-    `Interview plan context: ${Array.isArray(interviewPlan?.interviewPlan) ? interviewPlan.interviewPlan.map((entry) => entry?.topic || entry?.moduleName || "Topic").join(", ") : "N/A"}`,
+    `Interview plan context (internal only): ${Array.isArray(interviewPlan?.interviewPlan) ? interviewPlan.interviewPlan.map((entry) => entry?.topic || entry?.moduleName || "Topic").join(", ") : "N/A"}`,
     "Conversation summary:",
     conversationSummary,
     "Interview rules:",
     "- You MUST follow the Decision object exactly.",
     "- You MUST NOT invent interview flow.",
-    "- You MUST NOT change topic.",
+    "- You MUST NOT change topic unless Decision.action is moveToNextTopic.",
     "- You MUST NOT skip ahead.",
+    "- Paraphrase the suggested question intent naturally; do not paste curriculum titles as questions.",
     "- Ask only one question at a time.",
     "- Never reveal answers or give hints that solve the problem.",
     "- Be encouraging and concise.",

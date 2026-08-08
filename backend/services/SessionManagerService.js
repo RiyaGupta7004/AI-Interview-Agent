@@ -9,7 +9,7 @@ const sessions = new Map();
  * @param {object} session
  * @returns {object}
  */
-function buildInterviewState(session) {
+export function buildInterviewState(session) {
   const totalQuestions = Array.isArray(session?.plan?.interviewPlan)
     ? session.plan.interviewPlan.length
     : 0;
@@ -61,6 +61,10 @@ export function createSession(candidateId) {
     evaluationHistory: [],
     topicScores: {},
     followUpHistory: [],
+    followUpCount: 0,
+    askedQuestions: [],
+    weakTopics: [],
+    strongTopics: [],
     currentDifficulty: "Intermediate",
     currentTopicScore: 0,
     startedAt: new Date().toISOString(),
@@ -119,14 +123,6 @@ export function recordAnswer(sessionId, message, decision = null) {
   }
 
   const currentQuestion = getCurrentQuestion(session);
-  if (currentQuestion) {
-    session.completedQuestions.push({
-      question: currentQuestion.topic,
-      order: currentQuestion.order,
-      answeredAt: new Date().toISOString(),
-    });
-    session.completedTopics.push(currentQuestion.topic);
-  }
 
   session.conversation.push({
     role: "user",
@@ -147,6 +143,20 @@ export function recordAnswer(sessionId, message, decision = null) {
     };
   }
 
+  // Mark the current topic complete only when advancing (not on follow-ups).
+  if (currentQuestion) {
+    session.completedQuestions.push({
+      question: currentQuestion.topic,
+      order: currentQuestion.order,
+      answeredAt: new Date().toISOString(),
+    });
+    if (!session.completedTopics.includes(currentQuestion.topic)) {
+      session.completedTopics.push(currentQuestion.topic);
+    }
+  }
+
+  session.followUpCount = 0;
+
   const nextIndex = Number(session.currentQuestionIndex ?? 0) + 1;
 
   if (nextIndex < plan.length) {
@@ -160,7 +170,7 @@ export function recordAnswer(sessionId, message, decision = null) {
     };
   }
 
-  session.currentQuestionIndex = plan.length;
+  session.currentQuestionIndex = Math.max(plan.length - 1, 0);
   session.completed = true;
   session.endedAt = new Date().toISOString();
   return {
@@ -206,4 +216,5 @@ export default {
   getCurrentQuestion,
   recordAnswer,
   endSession,
+  buildInterviewState,
 };

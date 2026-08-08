@@ -192,6 +192,17 @@ export function determineNextAction(session = {}, evaluation = {}) {
   const topicScore = Number(session?.currentTopicScore ?? 0);
   const classification = evaluation?.classification || "PARTIAL";
 
+  // Cap follow-ups for every classification so the interview cannot stall forever.
+  if (followUpCount >= MAX_FOLLOW_UPS) {
+    return {
+      action: "moveToNextTopic",
+      reason: "Follow-up limit reached for this topic; continuing to the next topic.",
+      shouldMoveToNextTopic: true,
+      shouldAskFollowUp: false,
+      shouldFinish: false,
+    };
+  }
+
   if (classification === "INCORRECT") {
     return {
       action: "askFollowUp",
@@ -223,7 +234,7 @@ export function determineNextAction(session = {}, evaluation = {}) {
   }
 
   if (classification === "GOOD") {
-    if (followUpCount >= MAX_FOLLOW_UPS || topicScore >= 70) {
+    if (topicScore >= 70) {
       return {
         action: "moveToNextTopic",
         reason: "The candidate has demonstrated enough understanding to continue to the next topic.",
@@ -243,7 +254,7 @@ export function determineNextAction(session = {}, evaluation = {}) {
   }
 
   if (classification === "EXCELLENT") {
-    if (followUpCount >= MAX_FOLLOW_UPS || topicScore >= 70) {
+    if (topicScore >= 70) {
       return {
         action: "moveToNextTopic",
         reason: "The candidate has shown strong mastery and can progress to the next topic.",

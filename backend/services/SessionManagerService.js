@@ -3,6 +3,16 @@ import crypto from "node:crypto";
 import { createInterviewPlan } from "./InterviewPlannerService.js";
 
 const sessions = new Map();
+const SESSION_TTL_MS = 30 * 60 * 1000;
+const MAX_ACTIVE_SESSIONS = 500;
+
+function pruneExpiredSessions(now = Date.now()) {
+  for (const [sessionId, session] of sessions) {
+    if (now - Number(session.lastActivityAt || session.startedAt) > SESSION_TTL_MS) {
+      sessions.delete(sessionId);
+    }
+  }
+}
 
 /**
  * Build a safe interview state snapshot for a session.
@@ -39,6 +49,13 @@ export function buildInterviewState(session) {
  * @returns {{ session: object, currentQuestion: object | null }}
  */
 export function createSession(candidateId) {
+  pruneExpiredSessions();
+  if (sessions.size >= MAX_ACTIVE_SESSIONS) {
+    const error = new Error("Interview capacity is temporarily full.");
+    error.code = "SESSION_CAPACITY";
+    throw error;
+  }
+
   const plan = createInterviewPlan(candidateId);
   const sessionId = crypto.randomUUID();
   const interviewPlan = Array.isArray(plan?.interviewPlan) ? plan.interviewPlan : [];
@@ -69,6 +86,7 @@ export function createSession(candidateId) {
     currentDifficulty: "Intermediate",
     currentTopicScore: 0,
     startedAt: new Date().toISOString(),
+    lastActivityAt: Date.now(),
     completed: false,
     endedAt: null,
   };
@@ -87,7 +105,12 @@ export function createSession(candidateId) {
  * @returns {object | undefined}
  */
 export function getSession(sessionId) {
-  return sessions.get(sessionId);
+  pruneExpiredSessions();
+  const session = sessions.get(sessionId);
+  if (session) {
+    session.lastActivityAt = Date.now();
+  }
+  return session;
 }
 
 /**

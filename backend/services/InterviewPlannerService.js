@@ -7,15 +7,19 @@ const __dirname = path.dirname(__filename);
 
 const CURRICULUM_PATH = path.resolve(__dirname, "../data/curriculum.json");
 const CANDIDATES_PATH = path.resolve(__dirname, "../data/candidates.json");
+let curriculumCache;
+let candidatesCache;
 
 /**
  * Load the curriculum JSON file.
  * @returns {object} Parsed curriculum dataset.
  */
 export function loadCurriculum() {
+  if (curriculumCache) return curriculumCache;
   try {
     const raw = fs.readFileSync(CURRICULUM_PATH, "utf8");
-    return JSON.parse(raw);
+    curriculumCache = JSON.parse(raw);
+    return curriculumCache;
   } catch (error) {
     throw new Error(`Unable to load curriculum data: ${error.message}`);
   }
@@ -26,9 +30,11 @@ export function loadCurriculum() {
  * @returns {object} Parsed candidates dataset.
  */
 export function loadCandidates() {
+  if (candidatesCache) return candidatesCache;
   try {
     const raw = fs.readFileSync(CANDIDATES_PATH, "utf8");
-    return JSON.parse(raw);
+    candidatesCache = JSON.parse(raw);
+    return candidatesCache;
   } catch (error) {
     throw new Error(`Unable to load candidate data: ${error.message}`);
   }

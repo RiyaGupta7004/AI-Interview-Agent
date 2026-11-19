@@ -35,6 +35,8 @@ AI-Interview_Agent/
 
 ## Setup
 
+Use Node.js 20 or newer.
+
 ```bash
 # Backend
 cd backend
@@ -56,6 +58,8 @@ PORT=5000
 OPENAI_API_KEY=...
 OPENAI_BASE_URL=https://api.openai.com/v1
 OPENAI_MODEL=gpt-4o-mini
+CORS_ORIGINS=http://localhost:5173
+API_RATE_LIMIT=120
 ```
 
 Any OpenAI-compatible provider (OpenAI, Groq, etc.) works if it supports chat completions.
@@ -75,6 +79,23 @@ npm run dev
 - Frontend: http://localhost:5173  
 - Backend: http://localhost:5000  
 - Health: `GET /health`
+
+## Test
+
+```bash
+# Backend unit and API integration tests (AI provider is mocked)
+cd backend
+npm test
+
+# Frontend candidate-selection and interview/report flow tests
+cd ../frontend
+npm test
+
+# Production frontend build
+npm run build
+```
+
+The backend accepts JSON requests up to 16 KB and candidate answers up to 4,000 characters. Configure `CORS_ORIGINS` as a comma-separated allowlist and adjust `API_RATE_LIMIT` (requests per IP per minute) for the deployment. Active interview sessions are held in memory for up to 30 minutes and are removed after completion.
 
 ## API (summary)
 

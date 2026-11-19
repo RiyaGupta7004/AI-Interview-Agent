@@ -14,7 +14,9 @@ Health check.
 **Response `200`**
 ```json
 {
-  "status": "ok"
+  "success": true,
+  "status": "ok",
+  "message": "Server is healthy"
 }
 ```
 
@@ -101,7 +103,9 @@ Start a personalized interview session.
 
 **Errors**
 - `400` — missing/invalid `candidateId`
-- `503` — OpenAI configuration missing
+- `404` — candidate ID does not exist
+- `502` — interviewer model request failed
+- `503` — AI provider configuration unavailable or session capacity reached
 
 ---
 
@@ -194,8 +198,12 @@ Send a candidate answer and receive the next interviewer turn (or completion pay
 
 **Errors**
 - `400` — missing `sessionId` / empty message
+- `400` — malformed session ID
+- `413` — answer exceeds 4,000 characters or request body exceeds 16 KB
 - `404` — unknown session
 - `409` — session already completed
+- `409` — a message is already processing, or ending was attempted during processing
+- `429` — per-IP rate limit exceeded
 - `502` — interviewer LLM generation failed (turn rolled back; client may retry)
 - `500` — unexpected server error
 
@@ -228,7 +236,10 @@ Force-end an active session and return the report.
 
 **Errors**
 - `400` — missing `sessionId`
+- `400` — malformed session ID
 - `404` — unknown session
+- `409` — an answer is currently being processed
+- `429` — per-IP rate limit exceeded
 
 ---
 
@@ -243,3 +254,6 @@ Force-end an active session and return the report.
 Compatibility notes:
 - Message body accepts `message` (primary) or `candidateAnswer` (alias from earlier prompts)
 - Evaluation `source` is `"llm"` or `"heuristic"`
+- Responses never include provider error details; API requests are rate limited (default 120/IP/minute)
+- Browser origins must be listed in the backend `CORS_ORIGINS` environment variable (defaults to `http://localhost:5173`)
+- Compressed JSON request bodies are rejected; only simple query parsing is enabled

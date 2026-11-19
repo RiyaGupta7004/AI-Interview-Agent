@@ -1,6 +1,7 @@
 import OpenAI from "openai";
 
 const DEFAULT_MODEL = "gpt-4o-mini";
+const MAX_INTERVIEWER_MESSAGE_LENGTH = 1200;
 
 function getClient() {
   const apiKey = process.env.OPENAI_API_KEY?.trim();
@@ -78,9 +79,16 @@ export async function generateResponse(promptObject = {}) {
       emptyError.code = "EMPTY_MODEL_RESPONSE";
       throw emptyError;
     }
+    if (reply.length > MAX_INTERVIEWER_MESSAGE_LENGTH) {
+      const lengthError = new Error("The model response exceeded the allowed length.");
+      lengthError.code = "MODEL_RESPONSE_TOO_LONG";
+      throw lengthError;
+    }
+
+    const safeReply = reply.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, "");
 
     return {
-      message: reply,
+      message: safeReply,
       usage: completion?.usage || {
         prompt_tokens: 0,
         completion_tokens: 0,
@@ -93,18 +101,16 @@ export async function generateResponse(promptObject = {}) {
     const isConfigError = error instanceof Error && /OPENAI_(API_KEY|BASE_URL|MODEL)/.test(error.message);
 
     if (isConfigError) {
-      console.error("OpenAI configuration error:", error.message);
       throw error;
     }
 
-    console.error("OpenAI API request failed.");
-    console.error("status code:", error?.status || error?.response?.status || "unknown");
-    console.error("error code:", error?.code || error?.response?.data?.error?.code || "unknown");
-    console.error("error message:", error?.message || "unknown");
-    console.error("complete response body:", error?.response?.data || "no response body");
+    console.error("OpenAI API request failed.", {
+      status: error?.status || error?.response?.status || "unknown",
+      code: error?.code || error?.response?.data?.error?.code || "unknown",
+    });
 
     const apiError = new Error(
-      error?.message || "Sorry, I'm having trouble generating the next interview question. Please try again."
+      "The AI provider request failed."
     );
     apiError.code = error?.code || "OPENAI_REQUEST_FAILED";
     apiError.cause = error;

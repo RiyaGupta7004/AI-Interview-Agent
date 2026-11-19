@@ -66,6 +66,7 @@ function InterviewPage() {
   const [questionsRemaining, setQuestionsRemaining] = useState(0);
   const chatEndRef = useRef(null);
   const chatContainerRef = useRef(null);
+  const answerInputRef = useRef(null);
   const startedRef = useRef(false);
   const sendingRef = useRef(false);
 
@@ -112,6 +113,7 @@ function InterviewPage() {
       setCandidateName(data.candidateName || candidateName || "");
       applyInterviewState(data, data?.currentQuestion?.topic);
       setStatus("In Progress");
+      requestAnimationFrame(() => answerInputRef.current?.focus());
       setMessages([
         {
           id: createMessageId(),
@@ -254,41 +256,47 @@ function InterviewPage() {
   };
 
   const handleKeyDown = (event) => {
-    if (event.key === "Enter" && !event.shiftKey) {
+    if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
       event.preventDefault();
       void handleSendMessage();
     }
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 px-4 py-6 text-slate-100 sm:px-6 lg:px-8">
+    <div className="app-shell px-4 py-5 text-slate-100 sm:px-6 sm:py-7 lg:px-8">
       <div className="mx-auto max-w-7xl">
-        <InterviewHeader />
+        <p className="sr-only" role="status" aria-live="polite">{status}</p>
+        <InterviewHeader candidateName={candidateName} />
 
-        <div className="mb-6">
+        <div className="surface-subtle mb-5 rounded-xl px-4 py-3.5 sm:mb-6 sm:px-5">
           <ProgressBar
             currentQuestion={Math.max(1, Number(progress.current || 1))}
             totalQuestions={Math.max(progress.total || 1, 1)}
           />
         </div>
 
-        <div className="flex flex-col gap-6 lg:flex-row">
-          <main className="flex-1 overflow-hidden rounded-[28px] border border-slate-800 bg-slate-900/80 shadow-2xl shadow-slate-950/40 backdrop-blur-sm">
-            <div className="flex h-[72vh] min-h-[540px] flex-col">
-              <div className="flex items-center justify-between border-b border-slate-800/90 bg-slate-900/70 px-5 py-4 sm:px-6">
+        <div className="flex flex-col gap-5 lg:flex-row lg:items-start">
+          <main className="surface flex-1 overflow-hidden rounded-xl">
+            <div className="flex h-[70vh] min-h-[520px] flex-col">
+              <div className="flex items-center justify-between border-b border-slate-700/70 bg-slate-900/35 px-5 py-4 sm:px-6">
                 <div>
-                  <p className="text-xs uppercase tracking-[0.28em] text-slate-400">
+                  <p className="text-[10px] font-bold uppercase tracking-[.14em] text-slate-500">
                     {progressLabel}
                   </p>
                 </div>
-                <div className="rounded-full border border-emerald-400/30 bg-emerald-400/10 px-3 py-1 text-xs font-medium text-emerald-300">
-                  Online
+                <div className="flex items-center gap-2 text-xs font-semibold text-emerald-200">
+                  <span className="status-dot" /> Maya is here
                 </div>
               </div>
 
               <div
                 ref={chatContainerRef}
-                className="flex-1 space-y-5 overflow-y-auto bg-[radial-gradient(circle_at_top,_rgba(34,211,238,0.12),_transparent_30%),linear-gradient(180deg,_rgba(15,23,42,0.8),_rgba(2,6,23,1))] px-4 py-5 sm:px-6"
+                role="log"
+                aria-label="Interview conversation"
+                aria-live="polite"
+                aria-relevant="additions"
+                aria-atomic="false"
+                className="flex-1 space-y-6 overflow-y-auto bg-[radial-gradient(ellipse_70%_25%_at_50%_0%,rgba(20,184,166,.07),transparent),rgba(9,17,31,.62)] px-4 py-6 sm:px-6"
               >
                 {messages.map((message) => (
                   <ChatMessage
@@ -303,29 +311,43 @@ function InterviewPage() {
                 <div ref={chatEndRef} />
               </div>
 
-              <div className="border-t border-slate-800 bg-slate-950/60 p-4 sm:p-5">
-                <div className="flex items-end gap-3 rounded-2xl border border-slate-700 bg-slate-900/80 p-3 shadow-inner shadow-slate-950/40">
+              <form
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void handleSendMessage();
+                }}
+                className="border-t border-slate-700/70 bg-slate-950/25 p-4 sm:p-5"
+              >
+                <div className="flex items-end gap-3 rounded-xl border border-slate-700/90 bg-slate-950/40 p-2.5 transition focus-within:border-teal-300/60 focus-within:ring-1 focus-within:ring-teal-300/20">
+                  <label htmlFor="candidate-answer" className="sr-only">Your interview answer</label>
                   <textarea
+                    id="candidate-answer"
+                    ref={answerInputRef}
                     value={draft}
                     onChange={(event) => setDraft(event.target.value)}
                     onKeyDown={handleKeyDown}
                     rows={1}
+                    maxLength={4000}
                     disabled={isTyping || !sessionId}
                     placeholder="Type your answer..."
-                    className="max-h-32 min-h-[52px] flex-1 resize-none border-0 bg-transparent px-2 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
+                    aria-describedby="answer-help"
+                    className="max-h-32 min-h-[50px] flex-1 resize-none border-0 bg-transparent px-2 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-60"
                   />
 
                   <motion.button
+                    type="submit"
                     whileHover={isTyping || !sessionId || !draft.trim() ? undefined : { scale: 1.02 }}
                     whileTap={isTyping || !sessionId || !draft.trim() ? undefined : { scale: 0.98 }}
-                    onClick={() => void handleSendMessage()}
                     disabled={isTyping || !sessionId || !draft.trim()}
-                    className="rounded-xl bg-gradient-to-r from-cyan-400 to-blue-500 px-4 py-3 text-sm font-semibold text-slate-950 shadow-lg shadow-cyan-500/20 transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
+                    className="button-primary rounded-lg px-4 py-3 disabled:cursor-not-allowed"
                   >
                     Send
                   </motion.button>
                 </div>
-              </div>
+                <p id="answer-help" className="sr-only">
+                  Press Enter to send your answer or Shift and Enter for a new line. Maximum 4000 characters.
+                </p>
+              </form>
             </div>
           </main>
 

@@ -18,6 +18,18 @@ import {
   listCandidates,
 } from "../services/InterviewPlannerService.js";
 
+const MAX_ANSWER_LENGTH = 4000;
+const SESSION_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const processingSessions = new Set();
+
+function isValidSessionId(value) {
+  return typeof value === "string" && SESSION_ID_PATTERN.test(value);
+}
+
+function isOpenAIConfigurationError(error) {
+  return /OPENAI_(API_KEY|BASE_URL|MODEL)/.test(error?.message || "");
+}
+
 /**
  * Merge adaptive-engine state fields onto the live in-memory session.
  * @param {object} session
@@ -123,7 +135,7 @@ async function resolveEvaluation(answer, currentQuestion, session, curriculumCon
     });
     return llmEvaluation;
   } catch (error) {
-    console.warn("LLM evaluation unavailable, using curriculum heuristic:", error?.message || error);
+    console.warn("Answer evaluation fallback used.", { code: error?.code || "EVALUATION_FAILED" });
     return heuristic;
   }
 }
@@ -144,7 +156,7 @@ export const getCandidates = (req, res) => {
   } catch (error) {
     return res.status(500).json({
       success: false,
-      message: error.message || "Unable to load candidates.",
+      message: "Unable to load candidates.",
     });
   }
 };
@@ -155,17 +167,19 @@ export const getCandidates = (req, res) => {
  * @param {import('express').Response} res
  */
 export const startInterview = async (req, res) => {
+  let createdSessionId;
   try {
     const { candidateId } = req.body || {};
 
-    if (!candidateId) {
+    if (typeof candidateId !== "string" || !candidateId.trim() || candidateId.length > 80) {
       return res.status(400).json({
         success: false,
-        message: "candidateId is required.",
+        message: "A valid candidateId is required.",
       });
     }
 
-    const { session, currentQuestion } = createSession(candidateId);
+    const { session, currentQuestion } = createSession(candidateId.trim());
+    createdSessionId = session.sessionId;
     const interviewState = buildInterviewState(session);
     const curriculumContext = getCurriculumContextForTopic(
       currentQuestion?.topic,
@@ -228,10 +242,25 @@ export const startInterview = async (req, res) => {
       model: response?.model || process.env.OPENAI_MODEL || "unknown",
     });
   } catch (error) {
-    const status = /OPENAI_/.test(error?.message || "") ? 503 : 400;
+    if (createdSessionId) clearSession(createdSessionId);
+    const status = error?.code === "SESSION_CAPACITY"
+      ? 503
+      : /Candidate with id/.test(error?.message || "")
+        ? 404
+        : isOpenAIConfigurationError(error)
+          ? 503
+          : createdSessionId
+            ? 502
+            : 500;
     return res.status(status).json({
       success: false,
-      message: error.message || "Unable to start interview.",
+      message: status === 404
+        ? "The selected candidate was not found."
+        : status === 503
+          ? "Interview service is temporarily unavailable."
+          : status === 502
+            ? "Unable to start the interview right now. Please try again."
+            : "Unable to start the interview.",
       error: true,
     });
   }
@@ -243,13 +272,14 @@ export const startInterview = async (req, res) => {
  * @param {import('express').Response} res
  */
 export const sendMessage = async (req, res) => {
+  let lockedSessionId;
   try {
     const { sessionId, message, candidateAnswer } = req.body || {};
 
-    if (!sessionId) {
+    if (!isValidSessionId(sessionId)) {
       return res.status(400).json({
         success: false,
-        message: "sessionId is required.",
+        message: "A valid sessionId is required.",
         error: true,
       });
     }
@@ -262,6 +292,14 @@ export const sendMessage = async (req, res) => {
       return res.status(400).json({
         success: false,
         message: "Candidate message is required.",
+        error: true,
+      });
+    }
+
+    if (trimmedMessage.length > MAX_ANSWER_LENGTH) {
+      return res.status(413).json({
+        success: false,
+        message: `Candidate message must be ${MAX_ANSWER_LENGTH} characters or fewer.`,
         error: true,
       });
     }
@@ -283,6 +321,16 @@ export const sendMessage = async (req, res) => {
         error: true,
       });
     }
+
+    if (processingSessions.has(sessionId)) {
+      return res.status(409).json({
+        success: false,
+        message: "A response is already being processed for this interview.",
+        error: true,
+      });
+    }
+    processingSessions.add(sessionId);
+    lockedSessionId = sessionId;
 
     const currentQuestion =
       session?.plan?.interviewPlan?.[session.currentQuestionIndex] || null;
@@ -433,9 +481,7 @@ export const sendMessage = async (req, res) => {
 
       return res.status(502).json({
         success: false,
-        message:
-          llmError?.message ||
-          "Sorry, I'm having trouble generating the next interview question. Please try again.",
+        message: "Unable to generate the next interview question. Please try again.",
         error: true,
       });
     }
@@ -502,13 +548,14 @@ export const sendMessage = async (req, res) => {
       error: false,
     });
   } catch (error) {
+    console.error("Interview message processing failed.", { code: error?.code || "INTERVIEW_ERROR" });
     return res.status(500).json({
       success: false,
-      message:
-        error?.message ||
-        "Sorry, I'm having trouble generating the next interview question. Please try again.",
+      message: "Unable to process that response. Please try again.",
       error: true,
     });
+  } finally {
+    if (lockedSessionId) processingSessions.delete(lockedSessionId);
   }
 };
 
@@ -521,10 +568,17 @@ export const endInterview = (req, res) => {
   try {
     const { sessionId } = req.body || {};
 
-    if (!sessionId) {
+    if (!isValidSessionId(sessionId)) {
       return res.status(400).json({
         success: false,
-        message: "sessionId is required.",
+        message: "A valid sessionId is required.",
+      });
+    }
+
+    if (processingSessions.has(sessionId)) {
+      return res.status(409).json({
+        success: false,
+        message: "Wait for the current response to finish before ending the interview.",
       });
     }
 
@@ -549,9 +603,10 @@ export const endInterview = (req, res) => {
       interviewState,
     });
   } catch (error) {
+    console.error("Interview end failed.", { code: error?.code || "INTERVIEW_END_ERROR" });
     return res.status(400).json({
       success: false,
-      message: error.message || "Unable to end interview.",
+      message: "Unable to end interview.",
     });
   }
 };

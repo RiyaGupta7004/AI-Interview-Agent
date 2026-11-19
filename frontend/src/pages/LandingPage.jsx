@@ -1,48 +1,22 @@
 import { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
-import { Link, useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 
 import api, { getApiErrorMessage } from "../services/api.js";
 
-const featureCards = [
-  {
-    title: "Adaptive Interview",
-    description: "AI adjusts question difficulty based on responses and candidate performance.",
-    accent: "from-cyan-500/20 to-blue-500/20",
-  },
-  {
-    title: "Candidate Profiling",
-    description: "Uses candidate history and curriculum context to personalize the interview path.",
-    accent: "from-violet-500/20 to-fuchsia-500/20",
-  },
-  {
-    title: "Curriculum Driven",
-    description: "Questions are generated and ranked from the structured curriculum dataset.",
-    accent: "from-emerald-500/20 to-teal-500/20",
-  },
-  {
-    title: "Real-time Evaluation",
-    description: "Technical reasoning, communication quality, and confidence are evaluated continuously.",
-    accent: "from-amber-500/20 to-orange-500/20",
-  },
-  {
-    title: "AI Report",
-    description: "Generates strengths, weaknesses, hiring recommendation, and a learning roadmap.",
-    accent: "from-rose-500/20 to-pink-500/20",
-  },
-  {
-    title: "Multi-Agent Architecture",
-    description: "Planner, adaptive engine, prompt builder, and AI services work together as one system.",
-    accent: "from-indigo-500/20 to-cyan-500/20",
-  },
+const capabilities = [
+  ["Adaptive by design", "Questions evolve with the candidate's demonstrated depth and reasoning."],
+  ["Signal, not noise", "Structured evaluation makes technical, communication, and confidence signals clear."],
+  ["Actionable outcomes", "A tailored report turns every interview into a practical next step."],
 ];
 
-const steps = [
-  "Choose Candidate",
-  "Adaptive Interview",
-  "AI Evaluation",
-  "Personalized Report",
-];
+function ArrowIcon() {
+  return <svg aria-hidden="true" viewBox="0 0 20 20" className="h-4 w-4 fill-none stroke-current stroke-2"><path d="M4 10h11M11 5l5 5-5 5" /></svg>;
+}
+
+function SparkIcon() {
+  return <svg aria-hidden="true" viewBox="0 0 24 24" className="h-5 w-5 fill-none stroke-current stroke-[1.8]"><path d="m12 3 1.55 5.45L19 10l-5.45 1.55L12 17l-1.55-5.45L5 10l5.45-1.55L12 3ZM19 16l.72 2.28L22 19l-2.28.72L19 22l-.72-2.28L16 19l2.28-.72L19 16Z" /></svg>;
+}
 
 function LandingPage() {
   const navigate = useNavigate();
@@ -53,331 +27,86 @@ function LandingPage() {
 
   useEffect(() => {
     let cancelled = false;
-
-    const loadCandidates = async () => {
+    async function loadCandidates() {
       try {
-        setLoadingCandidates(true);
-        setCandidatesError("");
+        setLoadingCandidates(true); setCandidatesError("");
         const { data } = await api.get("/api/interview/candidates");
         if (cancelled) return;
-
         const list = Array.isArray(data?.candidates) ? data.candidates : [];
-        setCandidates(list);
-        if (list.length > 0) {
-          setSelectedId(list[0].id);
-        }
+        setCandidates(list); setSelectedId(list[0]?.id || "");
       } catch (error) {
-        if (cancelled) return;
-        setCandidatesError(getApiErrorMessage(error, "Unable to load candidates."));
-      } finally {
-        if (!cancelled) {
-          setLoadingCandidates(false);
-        }
-      }
-    };
-
+        if (!cancelled) setCandidatesError(getApiErrorMessage(error, "Unable to load candidates."));
+      } finally { if (!cancelled) setLoadingCandidates(false); }
+    }
     void loadCandidates();
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, []);
 
-  const selectedCandidate = useMemo(
-    () => candidates.find((candidate) => candidate.id === selectedId) || null,
-    [candidates, selectedId]
-  );
-
+  const selectedCandidate = useMemo(() => candidates.find((candidate) => candidate.id === selectedId) || null, [candidates, selectedId]);
   const startInterview = () => {
     if (!selectedId) return;
-    navigate("/interview", {
-      state: {
-        candidateId: selectedId,
-        candidateName: selectedCandidate?.name || "",
-      },
-    });
+    navigate("/interview", { state: { candidateId: selectedId, candidateName: selectedCandidate?.name || "" } });
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100">
-      <div className="mx-auto max-w-7xl px-4 pb-16 pt-6 sm:px-6 lg:px-8">
-        <header className="sticky top-0 z-20 mb-10 rounded-full border border-slate-700/70 bg-slate-900/60 px-4 py-3 shadow-2xl shadow-slate-950/30 backdrop-blur-xl">
-          <nav className="flex items-center justify-between gap-4">
-            <div className="flex items-center gap-3">
-              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-cyan-400 to-blue-500 text-sm font-bold text-slate-950 shadow-lg shadow-cyan-500/30">
-                AI
-              </div>
-              <span className="text-lg font-semibold tracking-tight text-white">
-                AI Interview Agent
-              </span>
-            </div>
-
-            <div className="hidden items-center gap-8 text-sm text-slate-300 md:flex">
-              <a href="#candidates" className="transition hover:text-cyan-300">
-                Candidates
-              </a>
-              <a href="#about" className="transition hover:text-cyan-300">
-                About
-              </a>
-              <button
-                type="button"
-                onClick={startInterview}
-                disabled={!selectedId}
-                className="rounded-full border border-cyan-400/30 bg-cyan-500/10 px-4 py-2 font-medium text-cyan-200 transition hover:border-cyan-300 hover:bg-cyan-500/20 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                Start Interview
-              </button>
-            </div>
-          </nav>
+    <div className="app-shell text-slate-100">
+      <div className="mx-auto max-w-7xl px-5 pb-16 sm:px-8 lg:px-10">
+        <header className="flex items-center justify-between py-6 sm:py-8">
+          <a href="#top" className="flex items-center gap-3 rounded-lg" aria-label="Interviewly home">
+            <span className="grid h-9 w-9 place-items-center rounded-xl bg-teal-300 text-slate-950 shadow-lg shadow-teal-400/10"><SparkIcon /></span>
+            <span className="text-base font-bold tracking-tight text-white">interviewly</span>
+          </a>
+          <a href="#candidates" className="button-secondary px-3.5 py-2 text-xs sm:text-sm">Select candidate <ArrowIcon /></a>
         </header>
 
-        <main>
-          <section className="relative overflow-hidden rounded-[32px] border border-slate-800 bg-slate-900/80 px-6 py-12 shadow-[0_30px_80px_rgba(2,6,23,0.9)] backdrop-blur-sm sm:px-10 lg:px-14 lg:py-16">
-            <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,_rgba(34,211,238,0.25),_transparent_35%),radial-gradient(circle_at_bottom_right,_rgba(59,130,246,0.18),_transparent_30%)]" />
+        <main id="top">
+          <section className="grid gap-10 py-12 lg:grid-cols-[1.07fr_.93fr] lg:items-center lg:py-20">
+            <motion.div initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: .45 }}>
+              <p className="eyebrow flex items-center gap-2"><span className="status-dot" /> Intelligent interview practice</p>
+              <h1 className="mt-5 max-w-3xl text-4xl font-semibold leading-[1.06] tracking-[-.045em] text-white sm:text-5xl lg:text-6xl">A more thoughtful way to interview.</h1>
+              <p className="mt-6 max-w-xl text-base leading-7 text-slate-300 sm:text-lg">Give every candidate a focused, adaptive technical interview — then turn the conversation into fair, useful hiring insight.</p>
+              <div className="mt-8 flex flex-wrap gap-3">
+                <a href="#candidates" className="button-primary">Begin an interview <ArrowIcon /></a>
+                <a href="#how-it-works" className="button-secondary">How it works</a>
+              </div>
+              <div className="mt-10 flex items-center gap-7 text-sm text-slate-400">
+                <span><strong className="block text-lg font-semibold text-slate-100">Adaptive</strong> question flow</span>
+                <span className="h-8 w-px bg-slate-700" />
+                <span><strong className="block text-lg font-semibold text-slate-100">Clear</strong> evaluation</span>
+              </div>
+            </motion.div>
 
-            <div className="relative grid items-center gap-12 lg:grid-cols-[1.2fr_0.8fr]">
-              <motion.div
-                initial={{ opacity: 0, y: 24 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.5 }}
-              >
-                <div className="mb-5 inline-flex items-center gap-2 rounded-full border border-cyan-400/25 bg-cyan-500/10 px-3 py-1 text-[10px] font-medium uppercase tracking-[0.24em] text-cyan-200">
-                  Hackathon Demo
-                </div>
-
-                <h1 className="max-w-xl text-4xl font-black tracking-[-0.06em] text-white sm:text-5xl lg:text-6xl">
-                  Adaptive AI Interview Agent
-                </h1>
-
-                <p className="mt-6 max-w-xl text-base leading-8 text-slate-300 sm:text-lg">
-                  An AI-powered interview platform that adapts to the candidate&apos;s knowledge level, evaluates responses, and generates personalized interview reports with learning recommendations.
-                </p>
-
-                <div className="mt-8 flex flex-col gap-4 sm:flex-row">
-                  <a
-                    href="#candidates"
-                    className="inline-flex items-center justify-center rounded-full bg-gradient-to-r from-cyan-400 to-blue-500 px-6 py-3 text-sm font-semibold text-slate-950 shadow-lg shadow-cyan-500/30 transition hover:brightness-110"
-                  >
-                    Choose Candidate
-                  </a>
-                  <a
-                    href="#features"
-                    className="inline-flex items-center justify-center rounded-full border border-slate-700 bg-slate-900/70 px-6 py-3 text-sm font-semibold text-slate-100 transition hover:border-cyan-400/50 hover:text-cyan-200"
-                  >
-                    View Features
-                  </a>
-                </div>
-              </motion.div>
-
-              <motion.div
-                initial={{ opacity: 0, scale: 0.96 }}
-                animate={{ opacity: 1, scale: 1 }}
-                transition={{ duration: 0.6, delay: 0.1 }}
-                className="relative"
-              >
-                <div className="absolute -inset-4 rounded-[28px] bg-gradient-to-r from-cyan-500/20 via-blue-500/10 to-transparent blur-2xl" />
-                <div className="relative rounded-[28px] border border-slate-700/80 bg-slate-900/70 p-5 shadow-2xl shadow-slate-950/60 backdrop-blur-xl">
-                  <div className="rounded-[24px] border border-slate-700 bg-slate-950/80 p-5">
-                    <div className="mb-6 flex items-center justify-between">
-                      <div>
-                        <p className="text-xs uppercase tracking-[0.26em] text-slate-400">Live Interview</p>
-                        <h2 className="mt-2 text-xl font-semibold text-white">Candidate Signal</h2>
-                      </div>
-                      <div className="rounded-full border border-emerald-400/30 bg-emerald-400/10 px-2.5 py-1 text-[10px] font-medium uppercase tracking-[0.2em] text-emerald-300">
-                        Online
-                      </div>
-                    </div>
-
-                    <div className="space-y-4">
-                      {[
-                        { label: "Technical Depth", value: 86 },
-                        { label: "Reasoning", value: 79 },
-                        { label: "Communication", value: 92 },
-                      ].map((item) => (
-                        <div key={item.label}>
-                          <div className="mb-1 flex items-center justify-between text-xs text-slate-300">
-                            <span>{item.label}</span>
-                            <span>{item.value}%</span>
-                          </div>
-                          <div className="h-2 rounded-full bg-slate-800">
-                            <motion.div
-                              initial={{ width: 0 }}
-                              animate={{ width: `${item.value}%` }}
-                              transition={{ duration: 0.9, ease: "easeOut" }}
-                              className="h-full rounded-full bg-gradient-to-r from-cyan-400 via-sky-500 to-blue-500"
-                            />
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-
-                    <div className="mt-6 rounded-2xl border border-slate-700 bg-slate-900/80 p-4">
-                      <p className="text-xs uppercase tracking-[0.24em] text-slate-500">Recommendation</p>
-                      <div className="mt-2 text-lg font-semibold text-cyan-200">Strong Hire</div>
-                    </div>
-                  </div>
-                </div>
-              </motion.div>
-            </div>
+            <motion.div initial={{ opacity: 0, x: 14 }} animate={{ opacity: 1, x: 0 }} transition={{ duration: .5, delay: .08 }} className="surface relative overflow-hidden rounded-2xl p-5 sm:p-6">
+              <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-teal-300/70 to-transparent" />
+              <div className="flex items-center justify-between border-b border-slate-700/60 pb-5">
+                <div className="flex items-center gap-3"><span className="grid h-10 w-10 place-items-center rounded-full bg-indigo-400/15 text-sm font-bold text-indigo-200">AI</span><div><p className="text-sm font-semibold text-white">Maya, AI interviewer</p><p className="mt-0.5 text-xs text-slate-400"><span className="mr-1.5 inline-block h-1.5 w-1.5 rounded-full bg-emerald-400" />Ready to begin</p></div></div>
+                <span className="rounded-md border border-slate-700/80 px-2.5 py-1 text-[11px] font-semibold text-slate-300">01 / 08</span>
+              </div>
+              <div className="py-7"><p className="text-xs font-semibold uppercase tracking-[.13em] text-teal-300">Current prompt</p><p className="mt-3 text-xl font-medium leading-8 text-white">Tell me how you would make a retrieval system reliable at scale.</p></div>
+              <div className="surface-subtle rounded-xl p-4"><div className="mb-2 flex items-center justify-between text-xs text-slate-400"><span>Interview signal</span><span className="font-semibold text-teal-300">Strong</span></div><div className="h-1.5 overflow-hidden rounded-full bg-slate-800"><div className="h-full w-[76%] rounded-full bg-gradient-to-r from-teal-400 to-cyan-300" /></div><div className="mt-4 grid grid-cols-3 gap-2 text-center text-[11px]"><span className="rounded-md bg-slate-800/80 px-2 py-2 text-slate-300">Reasoning</span><span className="rounded-md bg-slate-800/80 px-2 py-2 text-slate-300">Depth</span><span className="rounded-md bg-slate-800/80 px-2 py-2 text-slate-300">Clarity</span></div></div>
+            </motion.div>
           </section>
 
-          <section id="candidates" className="mt-20">
-            <div className="mb-8 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-              <div>
-                <p className="text-xs uppercase tracking-[0.34em] text-cyan-300">Step 1</p>
-                <h2 className="mt-3 text-3xl font-semibold tracking-tight text-white sm:text-4xl">
-                  Choose a candidate
-                </h2>
-                <p className="mt-3 max-w-2xl text-sm leading-7 text-slate-400">
-                  Interviews are personalized from each candidate&apos;s cohort missions, skips, and learning signals.
-                </p>
-              </div>
-
-              <button
-                type="button"
-                onClick={startInterview}
-                disabled={!selectedId || loadingCandidates}
-                className="inline-flex items-center justify-center rounded-full bg-gradient-to-r from-cyan-400 to-blue-500 px-6 py-3 text-sm font-semibold text-slate-950 shadow-lg shadow-cyan-500/30 transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                Start Interview{selectedCandidate ? ` · ${selectedCandidate.name}` : ""}
-              </button>
+          <section id="candidates" className="scroll-mt-5 border-t border-slate-800/90 py-14 sm:py-20">
+            <div className="flex flex-col gap-5 border-b border-slate-800/80 pb-7 sm:flex-row sm:items-end sm:justify-between">
+              <div><p className="eyebrow">New interview</p><h2 className="mt-3 text-3xl font-semibold tracking-[-.035em] text-white">Choose a candidate</h2><p className="mt-2 max-w-2xl text-sm leading-6 text-slate-400">Each plan uses their previous learning signals to meet them at the right level.</p></div>
+              <button type="button" onClick={startInterview} disabled={!selectedId || loadingCandidates} className="button-primary shrink-0">Start Interview{selectedCandidate ? ` · ${selectedCandidate.name}` : ""}<ArrowIcon /></button>
             </div>
 
-            {loadingCandidates ? (
-              <div className="rounded-3xl border border-slate-800 bg-slate-900/70 p-8 text-sm text-slate-400">
-                Loading candidates...
-              </div>
-            ) : null}
-
-            {candidatesError ? (
-              <div className="rounded-3xl border border-rose-500/30 bg-rose-500/10 p-6 text-sm text-rose-200">
-                {candidatesError}
-              </div>
-            ) : null}
-
-            {!loadingCandidates && !candidatesError ? (
-              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-                {candidates.map((candidate) => {
-                  const selected = candidate.id === selectedId;
-                  return (
-                    <button
-                      key={candidate.id}
-                      type="button"
-                      onClick={() => setSelectedId(candidate.id)}
-                      className={`rounded-[24px] border p-5 text-left transition ${
-                        selected
-                          ? "border-cyan-400/50 bg-cyan-500/10 shadow-lg shadow-cyan-500/10"
-                          : "border-slate-700/80 bg-slate-900/70 hover:border-cyan-400/30"
-                      }`}
-                    >
-                      <div className="flex items-start justify-between gap-3">
-                        <div>
-                          <p className="text-[10px] uppercase tracking-[0.22em] text-slate-500">
-                            {candidate.id}
-                          </p>
-                          <h3 className="mt-2 text-lg font-semibold text-white">{candidate.name}</h3>
-                          <p className="mt-1 text-sm text-slate-300">{candidate.role}</p>
-                        </div>
-                        <span
-                          className={`mt-1 inline-flex h-5 w-5 items-center justify-center rounded-full border ${
-                            selected
-                              ? "border-cyan-300 bg-cyan-400 text-[10px] text-slate-950"
-                              : "border-slate-600 bg-transparent"
-                          }`}
-                        >
-                          {selected ? "✓" : ""}
-                        </span>
-                      </div>
-
-                      <div className="mt-4 grid grid-cols-2 gap-2 text-xs text-slate-400">
-                        <div className="rounded-xl border border-slate-700/80 bg-slate-950/50 px-3 py-2">
-                          Exp: {candidate.experience ?? 0}y
-                        </div>
-                        <div className="rounded-xl border border-slate-700/80 bg-slate-950/50 px-3 py-2">
-                          Missions: {candidate.missionsCompleted ?? 0}
-                        </div>
-                        <div className="rounded-xl border border-slate-700/80 bg-slate-950/50 px-3 py-2">
-                          First-try: {candidate.missionsFirstTry ?? 0}
-                        </div>
-                        <div className="rounded-xl border border-slate-700/80 bg-slate-950/50 px-3 py-2">
-                          Skipped: {candidate.skippedTopics ?? 0}
-                        </div>
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
-            ) : null}
+            {loadingCandidates && <div role="status" className="mt-6 grid gap-4 md:grid-cols-3">{[1, 2, 3].map((item) => <div key={item} className="surface animate-pulse rounded-xl p-5"><div className="h-4 w-24 rounded bg-slate-700" /><div className="mt-5 h-6 w-40 rounded bg-slate-700" /><div className="mt-6 h-16 rounded bg-slate-800" /></div>)}</div>}
+            {candidatesError && <div role="alert" className="mt-6 rounded-xl border border-rose-400/25 bg-rose-400/10 p-4 text-sm text-rose-100">{candidatesError}</div>}
+            {!loadingCandidates && !candidatesError && (candidates.length ? <div role="group" aria-label="Available candidates" className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-3">{candidates.map((candidate) => {
+              const selected = candidate.id === selectedId;
+              return <button key={candidate.id} type="button" onClick={() => setSelectedId(candidate.id)} aria-pressed={selected} aria-label={`${candidate.name}, ${candidate.role}, ${candidate.experience ?? 0} years experience`} className={`group rounded-xl border p-5 text-left transition duration-200 ${selected ? "border-teal-300/70 bg-teal-300/[.07] shadow-[0_0_0_1px_rgba(94,234,212,.12)]" : "border-slate-700/70 bg-slate-900/40 hover:border-slate-500 hover:bg-slate-800/45"}`}>
+                <div className="flex items-start justify-between gap-4"><div><p className="text-[10px] font-bold tracking-[.13em] text-slate-500">{candidate.id}</p><h3 className="mt-2 text-lg font-semibold text-white">{candidate.name}</h3><p className="mt-1 text-sm text-slate-400">{candidate.role}</p></div><span className={`grid h-5 w-5 place-items-center rounded-full border text-[11px] ${selected ? "border-teal-300 bg-teal-300 text-slate-950" : "border-slate-600 text-transparent"}`}>✓</span></div>
+                <dl className="mt-5 grid grid-cols-2 gap-x-4 gap-y-3 border-t border-slate-700/55 pt-4 text-xs"><div><dt className="text-slate-500">Experience</dt><dd className="mt-1 font-medium text-slate-200">{candidate.experience ?? 0} years</dd></div><div><dt className="text-slate-500">Missions</dt><dd className="mt-1 font-medium text-slate-200">{candidate.missionsCompleted ?? 0} complete</dd></div><div><dt className="text-slate-500">First try</dt><dd className="mt-1 font-medium text-slate-200">{candidate.missionsFirstTry ?? 0}</dd></div><div><dt className="text-slate-500">Skipped</dt><dd className="mt-1 font-medium text-slate-200">{candidate.skippedTopics ?? 0} topics</dd></div></dl>
+              </button>;
+            })}</div> : <p role="status" className="mt-6 rounded-xl border border-slate-700 p-5 text-sm text-slate-400">No candidates are currently available.</p>)}
           </section>
 
-          <section id="features" className="mt-20">
-            <div className="mb-10 text-center">
-              <p className="text-xs uppercase tracking-[0.34em] text-cyan-300">Platform Features</p>
-              <h2 className="mt-4 text-3xl font-semibold tracking-tight text-white sm:text-4xl">
-                Built for adaptive, high-signal technical hiring
-              </h2>
-            </div>
-
-            <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
-              {featureCards.map((card, index) => (
-                <motion.article
-                  key={card.title}
-                  initial={{ opacity: 0, y: 18 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: 0.35, delay: index * 0.05 }}
-                  whileHover={{ y: -6 }}
-                  className={`rounded-[26px] border border-slate-700/80 bg-gradient-to-br ${card.accent} p-[1px] shadow-xl shadow-slate-950/30`}
-                >
-                  <div className="h-full rounded-[25px] border border-slate-700/80 bg-slate-950/85 p-6 backdrop-blur-xl">
-                    <div className="mb-5 h-12 w-12 rounded-2xl bg-slate-900/80 ring-1 ring-slate-700/80" />
-                    <h3 className="text-xl font-semibold text-white">{card.title}</h3>
-                    <p className="mt-3 text-sm leading-7 text-slate-300">{card.description}</p>
-                  </div>
-                </motion.article>
-              ))}
-            </div>
-          </section>
-
-          <section id="about" className="mt-20 rounded-[30px] border border-slate-800 bg-slate-900/70 p-6 shadow-2xl shadow-slate-950/30 backdrop-blur-sm sm:p-8 lg:p-10">
-            <div className="mb-10 text-center">
-              <p className="text-xs uppercase tracking-[0.32em] text-cyan-300">How It Works</p>
-              <h2 className="mt-4 text-3xl font-semibold tracking-tight text-white sm:text-4xl">
-                From candidate selection to personalized hiring insight
-              </h2>
-            </div>
-
-            <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-4">
-              {steps.map((step, index) => (
-                <div key={step} className="relative">
-                  <div className="rounded-[24px] border border-slate-700 bg-slate-950/80 p-5 shadow-lg shadow-slate-950/30">
-                    <div className="mb-4 flex h-10 w-10 items-center justify-center rounded-full bg-gradient-to-r from-cyan-400 to-blue-500 text-sm font-bold text-slate-950">
-                      {index + 1}
-                    </div>
-                    <div className="text-lg font-semibold text-white">{step}</div>
-                  </div>
-                  {index < steps.length - 1 ? (
-                    <div className="hidden justify-center py-3 text-cyan-300 xl:flex">↓</div>
-                  ) : null}
-                </div>
-              ))}
-            </div>
-          </section>
+          <section id="how-it-works" className="scroll-mt-5 border-t border-slate-800/90 py-14 sm:py-20"><p className="eyebrow">Designed for focus</p><div className="mt-3 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between"><h2 className="max-w-xl text-3xl font-semibold tracking-[-.035em] text-white">A better conversation from first question to final report.</h2><p className="max-w-sm text-sm leading-6 text-slate-400">Intentional structure keeps the interview human, even when the intelligence is automated.</p></div><div className="mt-9 grid gap-4 md:grid-cols-3">{capabilities.map(([title, description], index) => <article key={title} className="surface-subtle rounded-xl p-5"><span className="grid h-8 w-8 place-items-center rounded-lg bg-slate-800 text-sm font-semibold text-teal-300">0{index + 1}</span><h3 className="mt-6 text-base font-semibold text-white">{title}</h3><p className="mt-2 text-sm leading-6 text-slate-400">{description}</p></article>)}</div></section>
         </main>
-
-        <footer className="mt-20 rounded-[28px] border border-slate-800 bg-slate-900/70 p-6 text-center shadow-xl shadow-slate-950/30 backdrop-blur-sm">
-          <p className="text-xs uppercase tracking-[0.3em] text-cyan-300">Built for Hackathon</p>
-          <div className="mt-5 flex flex-wrap items-center justify-center gap-3 text-sm text-slate-300">
-            {["React", "Node.js", "Express", "Groq/OpenAI", "Tailwind"].map((item) => (
-              <span key={item} className="rounded-full border border-slate-700 bg-slate-950/60 px-3 py-1.5">
-                {item}
-              </span>
-            ))}
-          </div>
-          <div className="mt-4">
-            <Link to="/interview" className="text-sm text-cyan-300 hover:text-cyan-200">
-              Or open interview with default candidate
-            </Link>
-          </div>
-        </footer>
+        <footer className="border-t border-slate-800 py-7 text-xs text-slate-500">Interviewly — intelligent interview practice</footer>
       </div>
     </div>
   );

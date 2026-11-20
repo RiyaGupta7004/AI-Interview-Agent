@@ -2,14 +2,24 @@ const baseURL = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000";
 
 async function request(method, path, body) {
   let response;
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 30_000);
   try {
     response = await fetch(new URL(path, baseURL), {
       method,
+      credentials: "omit",
+      cache: "no-store",
       headers: body === undefined ? undefined : { "Content-Type": "application/json" },
       body: body === undefined ? undefined : JSON.stringify(body),
+      signal: controller.signal,
     });
-  } catch {
+  } catch (error) {
+    if (error?.name === "AbortError") {
+      throw new Error("The interview service took too long to respond. Please try again.");
+    }
     throw new Error("Unable to reach the interview service. Check your connection and try again.");
+  } finally {
+    clearTimeout(timeoutId);
   }
 
   let data;

@@ -101,6 +101,10 @@ test("health and candidate endpoints expose security headers and enforce allowed
   });
   assert.equal(health.status, 200);
   assert.equal(health.headers.get("x-content-type-options"), "nosniff");
+  assert.equal(health.headers.get("x-frame-options"), "DENY");
+  assert.equal(health.headers.get("cross-origin-opener-policy"), "same-origin");
+  assert.equal(health.headers.get("cross-origin-resource-policy"), "same-origin");
+  assert.equal(health.headers.get("cache-control"), "no-store");
   assert.equal(health.headers.get("access-control-allow-origin"), "http://localhost:5173");
 
   const candidates = await fetch(`${baseUrl}/api/interview/candidates`);

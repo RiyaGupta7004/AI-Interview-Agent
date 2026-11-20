@@ -9,7 +9,7 @@ function ChatMessage({ sender, text, timestamp }) {
           <span>{isAi ? <>Maya {"\u00b7"} Interviewer</> : "You"}</span>
           {timestamp ? <span aria-hidden="true" className="normal-case tracking-normal text-slate-600">{timestamp}</span> : null}
         </div>
-        <div className={["rounded-2xl border px-4 py-3.5 shadow-sm", isAi ? "border-slate-700/80 bg-slate-800/80 text-slate-100" : "border-teal-300/30 bg-teal-300 text-slate-950"].join(" ")}>
+        <div className={["rounded-2xl border px-4 py-3.5 shadow-sm", isAi ? "border-emerald-300/15 bg-gradient-to-br from-[#17382c] to-[#10251d] text-slate-100 shadow-black/15" : "border-emerald-300/35 bg-gradient-to-br from-emerald-500 to-teal-600 text-white shadow-[0_10px_24px_rgba(16,185,129,.2)]"].join(" ")}>
           <p className="text-sm leading-7 sm:text-[15px]">{text}</p>
         </div>
       </div>

@@ -11,11 +11,11 @@ function ProgressBar({ currentQuestion, totalQuestions }) {
         <span className="font-semibold text-slate-200">
           {safeTotal ? `Question ${safeCurrent} of ${safeTotal}` : "Preparing interview"}
         </span>
-        <span>{Math.round(progress)}%</span>
+        <span className="rounded-md border border-emerald-300/15 bg-emerald-400/[.07] px-1.5 py-0.5 text-[11px] font-bold text-emerald-200">{Math.round(progress)}%</span>
       </div>
 
       <div
-        className="h-1.5 overflow-hidden rounded-full bg-slate-800/90"
+        className="h-2 overflow-hidden rounded-full bg-slate-900/90 ring-1 ring-inset ring-white/[.035]"
         role="progressbar"
         aria-label="Interview progress"
         aria-valuemin={0}
@@ -24,7 +24,7 @@ function ProgressBar({ currentQuestion, totalQuestions }) {
         aria-valuetext={safeTotal ? `Question ${safeCurrent} of ${safeTotal}` : "Preparing interview"}
       >
         <motion.div
-          className="h-full rounded-full bg-gradient-to-r from-teal-400 to-cyan-300"
+          className="h-full rounded-full bg-gradient-to-r from-teal-400 via-emerald-400 to-green-400 shadow-[0_0_14px_rgba(16,185,129,.65)]"
           initial={{ width: 0 }}
           animate={{ width: `${progress}%` }}
           transition={{ duration: 0.5, ease: "easeOut" }}

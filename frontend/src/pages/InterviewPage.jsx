@@ -64,6 +64,7 @@ function InterviewPage() {
   const [topic, setTopic] = useState("Loading...");
   const [progress, setProgress] = useState({ current: 1, total: 1 });
   const [questionsRemaining, setQuestionsRemaining] = useState(0);
+  const [notice, setNotice] = useState("");
   const chatEndRef = useRef(null);
   const chatContainerRef = useRef(null);
   const answerInputRef = useRef(null);
@@ -126,6 +127,7 @@ function InterviewPage() {
       ]);
     } catch (error) {
       setStatus("Interview unavailable");
+      setNotice(getApiErrorMessage(error, "Unable to start the interview right now."));
       setMessages([
         {
           id: createMessageId(),
@@ -235,6 +237,7 @@ function InterviewPage() {
       ]);
       setStatus("In Progress");
     } catch (error) {
+      setNotice(getApiErrorMessage(error, "Sorry, something went wrong. Please try again."));
       setDraft(trimmed);
       setMessages((prev) => {
         const withoutOptimisticUser = prev.filter((entry) => entry.id !== userMessage.id);
@@ -264,11 +267,12 @@ function InterviewPage() {
 
   return (
     <div className="app-shell px-4 py-5 text-slate-100 sm:px-6 sm:py-7 lg:px-8">
-      <div className="mx-auto max-w-7xl">
+      <div className="relative mx-auto max-w-7xl">
         <p className="sr-only" role="status" aria-live="polite">{status}</p>
+        {notice ? <div className="toast fixed bottom-5 right-5 z-20 max-w-sm rounded-xl px-4 py-3 text-sm text-rose-100" role="alert"><div className="flex items-start gap-3"><span className="mt-1 h-2 w-2 shrink-0 rounded-full bg-rose-400" /><span>{notice}</span><button type="button" onClick={() => setNotice("")} className="-mt-1 ml-auto rounded p-1 text-rose-200 hover:bg-white/10" aria-label="Dismiss notification">×</button></div></div> : null}
         <InterviewHeader candidateName={candidateName} />
 
-        <div className="surface-subtle mb-5 rounded-xl px-4 py-3.5 sm:mb-6 sm:px-5">
+        <div className="surface-subtle mb-5 rounded-2xl px-4 py-3.5 sm:mb-6 sm:px-5">
           <ProgressBar
             currentQuestion={Math.max(1, Number(progress.current || 1))}
             totalQuestions={Math.max(progress.total || 1, 1)}
@@ -276,16 +280,16 @@ function InterviewPage() {
         </div>
 
         <div className="flex flex-col gap-5 lg:flex-row lg:items-start">
-          <main className="surface flex-1 overflow-hidden rounded-xl">
+          <main id="main-content" tabIndex={-1} className="surface flex-1 overflow-hidden rounded-2xl">
             <div className="flex h-[70vh] min-h-[520px] flex-col">
-              <div className="flex items-center justify-between border-b border-slate-700/70 bg-slate-900/35 px-5 py-4 sm:px-6">
+              <div className="flex items-center justify-between border-b border-slate-700/70 bg-[#0d2118]/80 px-5 py-4 sm:px-6">
                 <div>
                   <p className="text-[10px] font-bold uppercase tracking-[.14em] text-slate-500">
                     {progressLabel}
                   </p>
                 </div>
-                <div className="flex items-center gap-2 text-xs font-semibold text-emerald-200">
-                  <span className="status-dot" /> Maya is here
+                <div className="flex items-center gap-2 text-xs font-semibold text-emerald-100">
+                  <span className="status-dot" /> Maya is live
                 </div>
               </div>
 
@@ -296,7 +300,7 @@ function InterviewPage() {
                 aria-live="polite"
                 aria-relevant="additions"
                 aria-atomic="false"
-                className="flex-1 space-y-6 overflow-y-auto bg-[radial-gradient(ellipse_70%_25%_at_50%_0%,rgba(20,184,166,.07),transparent),rgba(9,17,31,.62)] px-4 py-6 sm:px-6"
+                className="flex-1 space-y-6 overflow-y-auto bg-[radial-gradient(ellipse_70%_25%_at_50%_0%,rgba(16,185,129,.14),transparent),radial-gradient(ellipse_40%_20%_at_100%_40%,rgba(45,212,191,.06),transparent),rgba(7,21,16,.7)] px-4 py-6 sm:px-6"
               >
                 {messages.map((message) => (
                   <ChatMessage
@@ -316,9 +320,9 @@ function InterviewPage() {
                   event.preventDefault();
                   void handleSendMessage();
                 }}
-                className="border-t border-slate-700/70 bg-slate-950/25 p-4 sm:p-5"
+                className="border-t border-slate-700/70 bg-[#091a13]/80 p-4 sm:p-5"
               >
-                <div className="flex items-end gap-3 rounded-xl border border-slate-700/90 bg-slate-950/40 p-2.5 transition focus-within:border-teal-300/60 focus-within:ring-1 focus-within:ring-teal-300/20">
+                <div className="input-shell flex items-end gap-3 rounded-xl p-2.5">
                   <label htmlFor="candidate-answer" className="sr-only">Your interview answer</label>
                   <textarea
                     id="candidate-answer"

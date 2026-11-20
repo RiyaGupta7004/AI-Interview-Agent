@@ -15,7 +15,8 @@ function InterviewSidebar({ topic, status, questionsRemaining, candidateName }) 
 
   return (
     <aside className="w-full lg:w-72 xl:w-80">
-      <div className="surface rounded-xl p-5">
+      <div className="surface relative overflow-hidden rounded-2xl p-5">
+        <div className="glow-line absolute inset-x-0 top-0 h-px" />
         <p className="text-[10px] font-bold uppercase tracking-[.13em] text-teal-300">Now discussing</p>
         <h2 className="mt-3 text-lg font-semibold tracking-tight text-white">{currentTopic}</h2>
         <p className="mt-2 text-sm leading-6 text-slate-400">The conversation adapts to the depth and clarity of each response.</p>

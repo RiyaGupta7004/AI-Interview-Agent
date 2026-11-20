@@ -19,6 +19,9 @@ describe("API client", () => {
     const [url, options] = fetchMock.mock.calls[0];
     expect(String(url)).toBe("http://localhost:5000/api/interview/start");
     expect(options.method).toBe("POST");
+    expect(options.credentials).toBe("omit");
+    expect(options.cache).toBe("no-store");
+    expect(options.signal).toBeInstanceOf(AbortSignal);
     expect(options.headers).toEqual({ "Content-Type": "application/json" });
     expect(options.body).toBe(JSON.stringify({ candidateId: "CAND-003" }));
   });
